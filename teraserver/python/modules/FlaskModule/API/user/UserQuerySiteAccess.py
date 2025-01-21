@@ -1,11 +1,11 @@
-from flask import jsonify, session, request
+from flask import request
 from flask_restx import Resource, reqparse, inputs
 from flask_babel import gettext
 from sqlalchemy import exc
-from modules.LoginModule.LoginModule import user_multi_auth
+from modules.LoginModule.LoginModule import user_multi_auth, current_user
 from modules.FlaskModule.FlaskModule import user_api_ns as api
-from opentera.db.models.TeraUser import TeraUser
 from opentera.db.models.TeraServiceAccess import TeraServiceAccess
+from opentera.db.models.TeraSite import TeraSite
 from opentera.db.models.TeraServiceRole import TeraServiceRole
 from modules.DatabaseModule.DBManager import DBManager
 import modules.Globals as Globals
@@ -26,7 +26,7 @@ get_parser.add_argument('with_empty', type=inputs.boolean, help='Used with id_si
                                                                 'id_user_group, also return sites that don\'t '
                                                                 'have any access with that user group')
 
-# post_parser = reqparse.RequestParser()
+post_parser = api.parser()
 post_schema = api.schema_model('user_site_access', {
     'properties': {
         'site_access': {
@@ -62,19 +62,18 @@ class UserQuerySiteAccess(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @user_multi_auth.login_required
-    @api.expect(get_parser)
     @api.doc(description='Get user roles for sites. Only one  parameter required and supported at once.',
              responses={200: 'Success - returns list of users roles in sites',
                         400: 'Required parameter is missing (must have at least one id)',
-                        500: 'Error occured when loading sites roles'})
+                        500: 'Error occurred when loading sites roles'})
+    @api.expect(get_parser)
+    @user_multi_auth.login_required
     def get(self):
-        from opentera.db.models.TeraSite import TeraSite
-        parser = get_parser
-
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Get access role to site for user / usergroup
+        """
         user_access = DBManager.userAccess(current_user)
-        args = parser.parse_args()
+        args = get_parser.parse_args()
 
         access = None
         # If we have no arguments, return bad request
@@ -149,22 +148,26 @@ class UserQuerySiteAccess(Resource):
                                 site_access_json['user_groups'] = ug_list
 
                             access_list.append(site_access_json)
+
+            # Sort by site name
+            if access_list and 'site_name' in access_list[0]:
+                access_list.sort(key=lambda a: a['site_name'])
             return access_list
 
         # No access, but still fine
         return [], 200
 
-    @user_multi_auth.login_required
-    @api.expect(post_schema)
     @api.doc(description='Create/update site access for a user group.',
              responses={200: 'Success',
                         403: 'Logged user can\'t modify this site or user access (site admin access required)',
                         400: 'Badly formed JSON or missing fields(id_user or id_site) in the JSON body',
                         500: 'Database error'})
+    @api.expect(post_schema)
+    @user_multi_auth.login_required
     def post(self):
-        # parser = post_parser
-
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Create / update site access for an user / usergroup
+        """
         user_access = DBManager.userAccess(current_user)
         # Using request.json instead of parser, since parser messes up the json!
         json_sites = request.json['site_access']
@@ -191,8 +194,11 @@ class UserQuerySiteAccess(Resource):
                 # Check if we must remove access for that site
                 if json_site['site_access_role'] == '':
                     # No more access to that site for that user group - remove all access!
-                    TeraServiceAccess.delete_service_access_for_user_group_for_site(
-                        id_user_group=json_site['id_user_group'], id_site=json_site['id_site'])
+                    TeraServiceAccess.delete_service_access_for_user_group(id_service=Globals.opentera_service_id,
+                                                                           id_user_group=json_site['id_user_group'],
+                                                                           id_site=json_site['id_site'])
+                    # TeraServiceAccess.delete_service_access_for_user_group_for_site(
+                    #     id_user_group=json_site['id_user_group'], id_site=json_site['id_site'])
                     continue
 
                 # If we are setting a "user" role for a site, check if there's already such an inherited role from
@@ -204,20 +210,22 @@ class UserQuerySiteAccess(Resource):
                                       .items() if project.id_site == json_site['id_site']]
                     if projects_roles:
                         # Delete that site access without adding new access
-                        TeraServiceAccess.delete_service_access_for_user_group_for_site(
-                            id_user_group=json_site['id_user_group'], id_site=json_site['id_site'])
+                        TeraServiceAccess.delete_service_access_for_user_group(id_service=Globals.opentera_service_id,
+                                                                               id_user_group=json_site['id_user_group'],
+                                                                               id_site=json_site['id_site'])
                         continue
 
                 # Find id_service_role for that
                 site_service_role = \
-                    TeraServiceRole.get_specific_service_role_for_site(service_id=Globals.opentera_service_id,
-                                                                       site_id=json_site['id_site'],
-                                                                       rolename=json_site['site_access_role'])
+                    TeraServiceRole.get_service_role_by_name(service_id=Globals.opentera_service_id,
+                                                             site_id=json_site['id_site'],
+                                                             rolename=json_site['site_access_role'])
             if 'id_service_role' in json_site:
                 if json_site['id_service_role'] == 0:
                     # No more access to that site for that user group - remove all access!
-                    TeraServiceAccess.delete_service_access_for_user_group_for_site(
-                        id_user_group=json_site['id_user_group'], id_site=json_site['id_site'])
+                    TeraServiceAccess.delete_service_access_for_user_group(id_service=Globals.opentera_service_id,
+                                                                           id_user_group=json_site['id_user_group'],
+                                                                           id_site=json_site['id_site'])
                     continue
                 site_service_role = TeraServiceRole.get_service_role_by_id(json_site['id_service_role'])
 
@@ -228,7 +236,7 @@ class UserQuerySiteAccess(Resource):
             try:
                 # access = TeraSiteAccess.update_site_access(json_site['id_user_group'], json_site['id_site'],
                 #                                            json_site['site_access_role'])
-                access = TeraServiceAccess.update_service_access_for_user_group_for_site(
+                access = TeraServiceAccess.update_service_access_for_user_group(
                     id_service=Globals.opentera_service_id, id_user_group=json_site['id_user_group'],
                     id_service_role=site_service_role.id_service_role, id_site=json_site['id_site'])
 
@@ -249,19 +257,18 @@ class UserQuerySiteAccess(Resource):
 
         return json_rval
 
-    @user_multi_auth.login_required
-    @api.expect(delete_parser)
     @api.doc(description='Delete a specific site access',
              responses={200: 'Success',
                         403: 'Logged user can\'t delete site access(only user who is admin in that site can remove it)',
                         500: 'Database error.'})
+    @api.expect(delete_parser)
+    @user_multi_auth.login_required
     def delete(self):
-        parser = delete_parser
-
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Delete a specific site access
+        """
         user_access = DBManager.userAccess(current_user)
-
-        args = parser.parse_args()
+        args = delete_parser.parse_args()
         id_todel = args['id']
 
         site_access = TeraServiceAccess.get_service_access_by_id(id_todel)

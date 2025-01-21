@@ -18,7 +18,7 @@ get_parser.add_argument('id_test_type', type=int, help='Test type ID to query as
 
 get_parser.add_argument('with_projects', type=inputs.boolean, help='Used with id_test_type. Also return projects '
                                                                    'that don\'t have any association with that type')
-get_parser.add_argument('with_test_types', type=inputs.boolean, help='Used with id_project. Also return types that '
+get_parser.add_argument('with_tests_types', type=inputs.boolean, help='Used with id_project. Also return types that '
                                                                      'don\'t have any association with that project')
 get_parser.add_argument('with_sites', type=inputs.boolean, help='Used with id_test_type. Also return site '
                                                                 'information of the returned projects.')
@@ -26,9 +26,7 @@ get_parser.add_argument('with_sites', type=inputs.boolean, help='Used with id_te
 get_parser.add_argument('list', type=inputs.boolean, help='Flag that limits the returned data to minimal information '
                                                           '(ids only)')
 
-# post_parser = reqparse.RequestParser()
-# post_parser.add_argument('session_type_project', type=str, location='json',
-#                          help='Device type - project association to create / update', required=True)
+post_parser = api.parser()
 post_schema = api.schema_model('user_test_type_project', {'properties': TeraTestTypeProject.get_json_schema(),
                                                           'type': 'object',
                                                           'location': 'json'})
@@ -46,19 +44,19 @@ class UserQueryTestTypeProjects(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @user_multi_auth.login_required
-    @api.expect(get_parser)
     @api.doc(description='Get test types that are associated with a project. Only one "ID" parameter required and '
                          'supported at once.',
              responses={200: 'Success - returns list of test-types - projects association',
                         400: 'Required parameter is missing (must have at least one id)',
                         500: 'Error when getting association'})
+    @api.expect(get_parser)
+    @user_multi_auth.login_required
     def get(self):
+        """
+        Get test types - project association
+        """
         user_access = DBManager.userAccess(current_user)
-
-        parser = get_parser
-
-        args = parser.parse_args()
+        args = get_parser.parse_args()
 
         test_type_projects = []
         # If we have no arguments, return error
@@ -67,11 +65,11 @@ class UserQueryTestTypeProjects(Resource):
 
         if args['id_project']:
             if args['id_project'] in user_access.get_accessible_projects_ids():
-                test_type_projects = user_access.query_test_types_for_project(project_id=args['id_project'],
-                                                                              include_other_test_types=
-                                                                              args['with_test_types'])
+                test_type_projects = user_access.query_tests_types_for_project(project_id=args['id_project'],
+                                                                              include_other_tests_types=
+                                                                              args['with_tests_types'])
         elif args['id_test_type']:
-            if args['id_test_type'] in user_access.get_accessible_test_types_ids():
+            if args['id_test_type'] in user_access.get_accessible_tests_types_ids():
                 test_type_projects = user_access.query_projects_for_test_type(test_type_id=args['id_test_type'],
                                                                               include_other_projects=
                                                                               args['with_projects'])
@@ -113,14 +111,17 @@ class UserQueryTestTypeProjects(Resource):
                                          'get', 500, 'InvalidRequestError', e)
             return '', 500
 
-    @user_multi_auth.login_required
-    @api.expect(post_schema)
     @api.doc(description='Create/update test-type - project association.',
              responses={200: 'Success',
                         403: 'Logged user can\'t modify association (project admin access required)',
                         400: 'Badly formed JSON or missing fields in the JSON body',
-                        500: 'Internal error occured when saving association'})
+                        500: 'Internal error occurred when saving association'})
+    @api.expect(post_schema)
+    @user_multi_auth.login_required
     def post(self):
+        """
+        Create / update test-type -> project association
+        """
         user_access = DBManager.userAccess(current_user)
 
         accessible_projects_ids = user_access.get_accessible_projects_ids(admin_only=True)
@@ -132,7 +133,7 @@ class UserQueryTestTypeProjects(Resource):
                 return gettext('Missing projects'), 400
             id_test_type = request.json['test_type']['id_test_type']
 
-            if id_test_type not in user_access.get_accessible_test_types_ids():
+            if id_test_type not in user_access.get_accessible_tests_types_ids():
                 return gettext("Access denied"), 403
 
             # Get all current association for test type
@@ -148,10 +149,17 @@ class UserQueryTestTypeProjects(Resource):
             todel_ids = set(current_projects_ids).difference(received_proj_ids)
             # Also filter projects already there
             received_proj_ids = set(received_proj_ids).difference(current_projects_ids)
-
-            for proj_id in todel_ids:
-                if proj_id in accessible_projects_ids:  # Don't remove from the list if not admin for that project!
-                    TeraTestTypeProject.delete_with_ids(test_type_id=id_test_type, project_id=proj_id)
+            try:
+                for proj_id in todel_ids:
+                    if proj_id in accessible_projects_ids:  # Don't remove from the list if not admin for that project!
+                        TeraTestTypeProject.delete_with_ids(test_type_id=id_test_type, project_id=proj_id,
+                                                            autocommit=False)
+                TeraTestTypeProject.commit()
+            except exc.IntegrityError as e:
+                self.module.logger.log_warning(self.module.module_name, UserQueryTestTypeProjects.__name__, 'delete',
+                                               500, 'Integrity error', str(e))
+                return gettext('Can\'t delete test type from project: please delete all tests of that type in the '
+                               'project before deleting.'), 500
             # Build projects association to add
             json_ttp = [{'id_test_type': id_test_type, 'id_project': proj_id} for proj_id in received_proj_ids]
         elif 'project' in request.json:
@@ -167,15 +175,22 @@ class UserQueryTestTypeProjects(Resource):
                 return gettext('Access denied'), 403
 
             # Get all current association
-            current_test_types = TeraTestTypeProject.get_tests_types_for_project(project_id=id_project)
-            current_test_types_ids = [tt.id_test_type for tt in current_test_types]
+            current_tests_types = TeraTestTypeProject.get_tests_types_for_project(project_id=id_project)
+            current_tests_types_ids = [tt.id_test_type for tt in current_tests_types]
             received_tt_ids = [tt['id_test_type'] for tt in request.json['project']['testtypes']]
             # Difference - we must delete types not anymore in the list
-            todel_ids = set(current_test_types_ids).difference(received_tt_ids)
+            todel_ids = set(current_tests_types_ids).difference(received_tt_ids)
             # Also filter types already there
-            received_tt_ids = set(received_tt_ids).difference(current_test_types_ids)
-            for tt_id in todel_ids:
-                TeraTestTypeProject.delete_with_ids(test_type_id=tt_id, project_id=id_project)
+            received_tt_ids = set(received_tt_ids).difference(current_tests_types_ids)
+            try:
+                for tt_id in todel_ids:
+                    TeraTestTypeProject.delete_with_ids(test_type_id=tt_id, project_id=id_project, autocommit=False)
+                TeraTestTypeProject.commit()
+            except exc.IntegrityError as e:
+                self.module.logger.log_warning(self.module.module_name, UserQueryTestTypeProjects.__name__, 'delete',
+                                               500, 'Integrity error', str(e))
+                return gettext('Can\'t delete test type from project: please delete all tests of that type in the '
+                               'project before deleting.'), 500
             # Build associations to add
             json_ttp = [{'id_test_type': tt_id, 'id_project': id_project} for tt_id in received_tt_ids]
         elif 'test_type_project' in request.json:
@@ -214,21 +229,22 @@ class UserQueryTestTypeProjects(Resource):
 
             # Do the update!
             if int(json_tt['id_test_type_project']) > 0:
-                # Already existing
-                try:
-                    TeraTestTypeProject.update(int(json_tt['id_test_type_project']), json_tt)
-                except exc.SQLAlchemyError as e:
-                    import sys
-                    print(sys.exc_info())
-                    self.module.logger.log_error(self.module.module_name,
-                                                 UserQueryTestTypeProjects.__name__,
-                                                 'post', 500, 'Database error', str(e))
-                    return gettext('Database error'), 500
+                # # Already existing
+                # try:
+                #     TeraTestTypeProject.update(int(json_tt['id_test_type_project']), json_tt)
+                # except exc.SQLAlchemyError as e:
+                #     import sys
+                #     print(sys.exc_info())
+                #     self.module.logger.log_error(self.module.module_name,
+                #                                  UserQueryTestTypeProjects.__name__,
+                #                                  'post', 500, 'Database error', str(e))
+                #     return gettext('Database error'), 500
+                pass
             else:
                 try:
                     new_ttp = TeraTestTypeProject()
                     new_ttp.from_json(json_tt)
-                    TeraTestTypeProject.insert(new_ttp)
+                    new_ttp = TeraTestTypeProject.insert(new_ttp)
                     # Update ID for further use
                     json_tt['id_test_type_project'] = new_ttp.id_test_type_project
                 except exc.SQLAlchemyError as e:
@@ -241,17 +257,18 @@ class UserQueryTestTypeProjects(Resource):
 
         return json_ttp
 
-    @user_multi_auth.login_required
-    @api.expect(delete_parser)
     @api.doc(description='Delete a specific test-type - project association.',
              responses={200: 'Success',
                         403: 'Logged user can\'t delete association (no access to test-type or project)',
                         400: 'Association not found (invalid id?)'})
+    @api.expect(delete_parser)
+    @user_multi_auth.login_required
     def delete(self):
-        parser = delete_parser
+        """
+        Delete a specific test type - project association
+        """
         user_access = DBManager.userAccess(current_user)
-
-        args = parser.parse_args()
+        args = delete_parser.parse_args()
         id_todel = args['id']
 
         # Check if current user can delete
@@ -260,12 +277,19 @@ class UserQueryTestTypeProjects(Resource):
             return gettext('Not found'), 400
 
         if ttp.id_project not in user_access.get_accessible_projects_ids(admin_only=True) or ttp.id_test_type not in \
-                user_access.get_accessible_test_types_ids():
+                user_access.get_accessible_tests_types_ids():
             return gettext('Access denied'), 403
 
         # If we are here, we are allowed to delete. Do so.
         try:
             TeraTestTypeProject.delete(id_todel=id_todel)
+        except exc.IntegrityError as e:
+            # Causes that could make an integrity error when deleting:
+            # - Associated project still have sessions with tests of that type
+            self.module.logger.log_warning(self.module.module_name, UserQueryTestTypeProjects.__name__, 'delete', 500,
+                                           'Integrity error', str(e))
+            return gettext('Can\'t delete test type from project: please delete all tests of that type in the project '
+                           'before deleting.'), 500
         except exc.SQLAlchemyError as e:
             import sys
             print(sys.exc_info())

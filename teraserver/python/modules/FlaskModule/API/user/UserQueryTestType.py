@@ -1,10 +1,11 @@
-from flask import session, request
+from flask import request
 from flask_restx import Resource, reqparse, inputs
 from modules.LoginModule.LoginModule import user_multi_auth, current_user
 from modules.FlaskModule.FlaskModule import user_api_ns as api
 from opentera.db.models.TeraTestType import TeraTestType
 from opentera.db.models.TeraServiceSite import TeraServiceSite
 from opentera.db.models.TeraTestTypeProject import TeraTestTypeProject
+from opentera.db.models.TeraTestTypeSite import TeraTestTypeSite
 from modules.DatabaseModule.DBManager import DBManager
 from sqlalchemy.exc import InvalidRequestError, IntegrityError
 from sqlalchemy import exc
@@ -15,6 +16,7 @@ from opentera.redis.RedisVars import RedisVars
 # Parser definition(s)
 get_parser = api.parser()
 get_parser.add_argument('id_test_type', type=int, help='ID of the test type to query')
+get_parser.add_argument('test_type_uuid', type=str, help='UUID of the test type to query')
 get_parser.add_argument('test_type_key', type=str, help='Key of the test type to query')
 get_parser.add_argument('id_project', type=int, help='ID of the project to get test types for')
 get_parser.add_argument('id_site', type=int, help='ID of the site to get test types for')
@@ -23,10 +25,7 @@ get_parser.add_argument('with_urls', type=inputs.boolean, help='Also include tes
 get_parser.add_argument('with_only_token', type=inputs.boolean, help='Only includes the access token. '
                                                                      'Will ignore with_urls if specified.')
 
-# post_parser = reqparse.RequestParser()
-# post_parser.add_argument('session_type', type=str, location='json', help='Session type to create / update',
-#                          required=True)
-
+post_parser = api.parser()
 post_schema = api.schema_model('user_test_type', {'properties': TeraTestType.get_json_schema(), 'type': 'object',
                                                   'location': 'json'})
 
@@ -41,33 +40,45 @@ class UserQueryTestTypes(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @user_multi_auth.login_required
-    @api.expect(get_parser)
     @api.doc(description='Get test type information. If no id_test_type specified, returns all available test types',
              responses={200: 'Success - returns list of test types',
                         500: 'Database error'})
+    @api.expect(get_parser)
+    @user_multi_auth.login_required
     def get(self):
+        """
+        Get test types
+        """
         user_access = DBManager.userAccess(current_user)
-
-        parser = get_parser
-
-        args = parser.parse_args()
+        args = get_parser.parse_args()
 
         if args['id_test_type']:
-            test_types = [user_access.query_test_type(args['id_test_type'])]
+            test_type = user_access.query_test_type(args['id_test_type'])
+            if not test_type:
+                return gettext('Test type not found'), 404
+            test_types = [test_type]
         elif args['test_type_key']:
             test_type = TeraTestType.get_test_type_by_key(args['test_type_key'])
+            if not test_type:
+                return gettext('Test type not found'), 404
             test_types = [user_access.query_test_type(test_type.id_test_type)]  # Call to filter access if needed
+        elif args['test_type_uuid']:
+            test_type = TeraTestType.get_test_type_by_uuid(args['test_type_uuid'])
+            if not test_type:
+                return gettext('Test type not found'), 404
+            test_types = [user_access.query_test_type(test_type.id_test_type)]
         elif args['id_project']:
-            test_types_projects = user_access.query_test_types_for_project(args['id_project'])
+            if args['id_project'] not in user_access.get_accessible_projects_ids():
+                return gettext('Forbidden'), 403
+            test_types_projects = user_access.query_tests_types_for_project(args['id_project'])
             test_types = [ttp.test_type_project_test_type for ttp in test_types_projects]
         elif args['id_site']:
             if args['id_site'] not in user_access.get_accessible_sites_ids():
                 return gettext('Forbidden'), 403
-            test_types_sites = user_access.query_test_types_sites_for_site(args['id_site'])
+            test_types_sites = user_access.query_tests_types_sites_for_site(args['id_site'])
             test_types = [tts.test_type_site_test_type for tts in test_types_sites]
         else:
-            test_types = user_access.get_accessible_test_types()
+            test_types = user_access.get_accessible_tests_types()
 
         try:
             test_types_list = []
@@ -115,8 +126,6 @@ class UserQueryTestTypes(Resource):
                                          'get', 500, 'InvalidRequestError')
             return gettext('Invalid request'), 500
 
-    @user_multi_auth.login_required
-    @api.expect(post_schema)
     @api.doc(description='Create / update test type. id_test_type must be set to "0" to create a new '
                          'type. A test type can be created/modified if the user has access to a related test type'
                          'project.',
@@ -124,7 +133,12 @@ class UserQueryTestTypes(Resource):
                         403: 'Logged user can\'t create/update the specified test type',
                         400: 'Badly formed JSON or missing field in the JSON body',
                         500: 'Internal error when saving test type'})
+    @api.expect(post_schema)
+    @user_multi_auth.login_required
     def post(self):
+        """
+        Create / update test types
+        """
         user_access = DBManager.userAccess(current_user)
         # Using request.json instead of parser, since parser messes up the json!
         if 'test_type' not in request.json:
@@ -138,12 +152,16 @@ class UserQueryTestTypes(Resource):
 
         # Check if current user can modify the posted type
         if json_test_type['id_test_type'] > 0:
-            projects_ids = [proj.id_project for proj in
-                            TeraTestTypeProject.get_projects_for_test_type(json_test_type['id_test_type'])]
-            admin_projects_ids = user_access.get_accessible_projects_ids(admin_only=True)
-
-            if len(set(projects_ids).difference(admin_projects_ids)) == len(projects_ids):
-                return gettext('Not project admin in at least one project'), 403
+            # Test types can be modified if the user has admin access to service (e.g. has admin access to a site
+            # related to that service or is super admin) -> This will be checked below.
+            pass
+            # projects_ids = [proj.id_project for proj in
+            #                 TeraTestTypeProject.get_projects_for_test_type(json_test_type['id_test_type'])]
+            # admin_projects_ids = user_access.get_accessible_projects_ids(admin_only=True)
+            #
+            # accessible_projects = [proj_id for proj_id in projects_ids if proj_id in admin_projects_ids]
+            # if len(accessible_projects) and not current_user.user_superadmin:
+            #     return gettext('Not project admin in at least one project'), 403
         else:
             # Test types can be created without a project if super admin, but require a project otherwise
             if 'test_type_projects' not in json_test_type and not current_user.user_superadmin:
@@ -163,7 +181,8 @@ class UserQueryTestTypes(Resource):
             test_type: TeraTestType = TeraTestType.get_test_type_by_id(json_test_type['id_test_type'])
             if test_type:
                 current_service_id = test_type.id_service
-        if current_service_id not in user_access.get_accessible_services_ids():
+
+        if current_service_id not in user_access.get_accessible_services_ids(admin_only=True):
             return gettext('Forbidden'), 403
 
         tt_sites_ids = []
@@ -175,6 +194,7 @@ class UserQueryTestTypes(Resource):
                 test_type_sites = [test_type_sites]
             tt_sites_ids = [site['id_site'] for site in test_type_sites]
             admin_sites_ids = user_access.get_accessible_sites_ids(admin_only=True)
+
             if set(tt_sites_ids).difference(admin_sites_ids):
                 # We have some sites where we are not admin
                 return gettext('No site admin access for at least one site in the list'), 403
@@ -260,7 +280,7 @@ class UserQueryTestTypes(Resource):
 
             # Ensure that the newly added session types sites have a correct service site association, if required
             for tts in update_test_type.test_type_test_type_sites:
-                tts.check_integrity()
+                TeraTestTypeSite.check_integrity(tts)
 
         # Update test type projects, if needed
         if update_tt_projects:
@@ -298,39 +318,33 @@ class UserQueryTestTypes(Resource):
             # Ensure that the newly added test types projects have a correct service project association, if required
             for ttp in update_test_type.test_type_test_type_projects:
                 try:
-                    ttp.check_integrity()
+                    TeraTestTypeProject.check_integrity(ttp)
                 except IntegrityError:
                     return gettext('Test type has a a service not associated to its site'), 400
 
         return [update_test_type.to_json()]
 
-    @user_multi_auth.login_required
-    @api.expect(delete_parser)
     @api.doc(description='Delete a specific test type',
              responses={200: 'Success',
                         403: 'Logged user can\'t delete test type (no admin access to project related to that type '
                              'or tests of that type exists in the system somewhere)',
                         500: 'Database error.'})
+    @api.expect(delete_parser)
+    @user_multi_auth.login_required
     def delete(self):
-        parser = reqparse.RequestParser()
-        parser.add_argument('id', type=int, help='ID to delete', required=True)
+        """
+        Delete test type
+        """
         user_access = DBManager.userAccess(current_user)
-
-        args = parser.parse_args()
+        args = delete_parser.parse_args()
         id_todel = args['id']
 
         # Check if current user can delete
         test_type = TeraTestType.get_test_type_by_id(id_todel)
 
-        # Check if we are admin of all projects of that test type
-        if len(test_type.test_type_projects) > 0:
-            for proj in test_type.test_type_projects:
-                if user_access.get_project_role(proj.id_project) != "admin":
-                    return gettext('Cannot delete because you are not admin in all projects.'), 403
-        else:
-            # No project right now for that test type - must at least project admin somewhere to delete
-            if len(user_access.get_accessible_projects(admin_only=True)) == 0:
-                return gettext('Unable to delete - not admin in at least one project'), 403
+        # Check if we have admin access to the related test type service
+        if test_type.id_service not in user_access.get_accessible_services_ids(admin_only=True):
+            return gettext('Unable to delete - not admin in the related test type service'), 403
 
         # If we are here, we are allowed to delete. Do so.
         try:
@@ -338,10 +352,9 @@ class UserQueryTestTypes(Resource):
         except exc.IntegrityError as e:
             # Causes that could make an integrity error when deleting:
             # - Associated tests of that test type
-            self.module.logger.log_error(self.module.module_name,
-                                         UserQueryTestTypes.__name__,
-                                         'delete', 500, 'Database error', e)
-            return gettext('Can\'t delete test type: please delete all tests of that type before deleting.'), 400
+            self.module.logger.log_warning(self.module.module_name, UserQueryTestTypes.__name__, 'delete', 500,
+                                           'Integrity error', str(e))
+            return gettext('Can\'t delete test type: please delete all tests of that type before deleting.'), 500
         except exc.SQLAlchemyError as e:
             import sys
             print(sys.exc_info())

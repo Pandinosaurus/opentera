@@ -1,16 +1,18 @@
 let timerId = -1;
 let timeout = 0;
+let loaded = false;
 
 function loginParticipant(){
-    document.getElementById('mainview').src = "participant_localview?token=" + participant_token + "&source=" +
+    /*document.getElementById('mainview').src = "participant_localview?token=" + participant_token + "&source=" +
         clientSource;
-    $('#mainview').on('load', function() {
-        if (ws === undefined){
+    $('#mainview').on('load', function() {*/
+        if (ws === undefined && !loaded){
             // No websocket connection - login participant
             console.log("Mainview loaded - login participant...")
+            loaded = true;
             doParticipantLogin(backend_hostname, backend_port, participant_token);
         }
-    });
+    //});
 
 }
 
@@ -34,11 +36,6 @@ function doParticipantLogin(backend_url, backend_port, participant_token){
           	type: "GET",
           	url: 'https://' + backend_url + ':' + backend_port + '/api/participant/login',
           	success: function(response, status, request){
-                clearInterval(timerId);
-                timerId=-1;
-
-                // Get websocket url
-                sessionStorage.setItem("websocket_url", response["websocket_url"]);
 
                 // Set flag to indicate participant login
                 sessionStorage.setItem("is_participant", true);
@@ -46,8 +43,26 @@ function doParticipantLogin(backend_url, backend_port, participant_token){
                 // Set token
                 sessionStorage.setItem("participant_token", participant_token)
 
-                // Connect websocket
-                webSocketConnect();
+                // Clear timer
+                clearInterval(timerId);
+                timerId=-1;
+
+                console.log("websocket_url", response['websocket_url'])
+                if (response['websocket_url'])
+                {
+                    // Get websocket url
+                    sessionStorage.setItem("websocket_url", response["websocket_url"]);
+
+                    // Connect websocket
+                    webSocketConnect();
+                }
+                else
+                {
+                    console.log("Will call doParticipantForcedLogout");
+                    // Token is stored, this will have the effect of disconnecting the websocket
+                    // from another login attempt
+                    doParticipantForcedLogout(backend_url, backend_port);
+                }
             },
           beforeSend: function (xhr) {
             xhr.setRequestHeader('Authorization', 'OpenTera ' + participant_token);
@@ -78,6 +93,17 @@ function doParticipantLogout(backend_url, backend_port){
     // Important: OpenTera.js must be included for this to work.
     doGetRequest(backend_url, backend_port, '/api/participant/logout', sessionStorage.getItem('participant_token'),
     participantLogoutSuccess, participantLogoutError);
+}
+
+function doParticipantForcedLogout(backend_url, backend_port){
+    // Important: OpenTera.js must be included for this to work.
+    doGetRequest(backend_url, backend_port, '/api/participant/logout', sessionStorage.getItem('participant_token'),
+    participantForcedLogoutSuccess, participantForcedLogoutSuccess);
+}
+
+function participantForcedLogoutSuccess(response, status, request){
+    // Will retry connecting
+    window.location.replace("participant?token=" + sessionStorage.getItem("participant_token"));
 }
 
 function participantLogoutSuccess(response, status, request){

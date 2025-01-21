@@ -1,6 +1,8 @@
-# OpenTera
+# About OpenTera
 
 [![Actions Status](https://github.com/introlab/opentera/actions/workflows/python-package-pypi.yml/badge.svg)](https://github.com/introlab/opentera/actions)
+[![DOI](https://zenodo.org/badge/168543624.svg)](https://zenodo.org/doi/10.5281/zenodo.10078846)
+
 
 OpenTera is a micro-services based backend primarily built to support research projects. Focusing on years in the research field, common features between the different projects emerged:
 
@@ -10,6 +12,9 @@ OpenTera is a micro-services based backend primarily built to support research p
 * Security: The need to store and transfer data in a secure and controlled way
 
 To address those common features, OpenTera was designed with an architecture based as much as possible on recognized standards and best practices.
+
+## Documentation
+* https://introlab.github.io/opentera/
 
 ## What can OpenTera do for you?
 
@@ -38,6 +43,9 @@ You are welcome to participate in this effort. Leave us comments or report [Issu
 
 * Dominic Létourneau, ing. M.Sc.A., IntRoLab, Université de Sherbrooke (@doumdi)
 * Simon Brière, ing. M.Sc.A., CDRV, Université de Sherbrooke (@sbriere)
+* François Michaud, ing. Ph.D., IntRoLab, Université de Sherbrooke
+* Michel Tousignant, pht, Ph.D., CDRV, Université de Sherbrooke
+
 
 ## Contributors
 
@@ -48,6 +56,7 @@ You are welcome to participate in this effort. Leave us comments or report [Issu
 
 ## Publication(s)
 
+* [![DOI](https://joss.theoj.org/papers/10.21105/joss.05497/status.svg)](https://doi.org/10.21105/joss.05497) Létourneau, D., Brière , S.,  et al., [OpenTera: A Framework for Telehealth Applications](https://doi.org/10.21105/joss.05497), Journal of Open Source Software, vol. 8, no 91, p. 5497 (2023)
 * Panchea, A.M., Létourneau, D., Brière, S. et al., [OpenTera: A microservice architecture solution for rapid prototyping of robotic solutions to COVID-19 challenges in care facilities](https://rdcu.be/cHzmf),  Health Technol. 12, 583–596 (2022)
 
 ## Videos
@@ -62,7 +71,7 @@ You are welcome to participate in this effort. Leave us comments or report [Issu
 
 ## Documentation and getting started
 
-Detailled information is available in the [wiki](https://github.com/introlab/opentera/wiki)
+Detailled information is available in the [docs](https://introlab.github.io/opentera/)
 
 ## License
 

@@ -3,7 +3,7 @@ var https   = require("https");     // https server core module
 var http = require("http");         // http server core module
 var fs      = require("fs");        // file system core module
 var express = require("express");   // web framework external module
-var io      = require("socket.io"); // web socket external module
+var socketIo = require("socket.io") // web socket external module
 var easyrtc = require("open-easyrtc");   // EasyRTC external module
 var ejs = require("ejs");
 var redis = require('redis')
@@ -15,7 +15,12 @@ let args = minimist(process.argv.slice(2), {
         port: 8080,
         key: "",
         local_ssl: false,
-        debug: false
+        debug: false,
+        redis_hostname: "127.0.0.1",
+        redis_port: 6379,
+        redis_db: 0,
+        redis_username: "",
+        redis_password: "",
     },
 });
 
@@ -89,8 +94,8 @@ if (args.local_ssl == false){
 }else{
     var webServer = https.createServer(
         {
-            key:  fs.readFileSync("../python/certificates/site_key.pem"),
-            cert: fs.readFileSync("../python/certificates/site_cert.pem")
+            key:  fs.readFileSync("../python/config/certificates/site_key.pem"),
+            cert: fs.readFileSync("../python/config/certificates/site_cert.pem")
         },
         httpApp).listen(args.port);
 }
@@ -98,7 +103,7 @@ if (args.local_ssl == false){
 // Start Socket.io so it attaches itself to Express server
 var websocket_path = "/websocket/" + args.port + '/'
 //console.log('websocket path:', websocket_path)
-var socketServer = io.listen(webServer, {"log level":1, "path": websocket_path, "cookie": false});
+var socketServer = socketIo(webServer, {"allowEIO3": true, "log level":1, "path": websocket_path, "cookie": false});
 
 
 //TODO Set options here (ice servers)
@@ -131,8 +136,9 @@ if (args.debug != false){
 }
 //easyrtc.setOption("updateCheckEnable",false);
 
-//Setup redis client (default configuration)
-var client = redis.createClient()
+// TODO DB ID ?
+var client = redis.createClient({ url: 'redis://' + args.redis_username + ':' + 
+                                        args.redis_password + '@' + args.redis_hostname + ':' + args.redis_port })
 
 client.on("connect", function() {
   console.log("Redis now connected");
@@ -143,8 +149,6 @@ client.on("connect", function() {
     console.log("Message published");
    });
 });
-
-
 
 // Start EasyRTC server
 var rtc = easyrtc.listen(httpApp, socketServer);

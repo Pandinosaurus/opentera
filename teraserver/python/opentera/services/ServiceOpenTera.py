@@ -29,6 +29,7 @@ class ServiceOpenTera(RedisClient):
 
         # Store config
         self.config = config_man.service_config
+        self.config_man = config_man
 
         # Take values from config_man
         # Values are checked when config is loaded...
@@ -39,20 +40,8 @@ class ServiceOpenTera(RedisClient):
         # Create service token for service api requests
         self.service_token = self.service_generate_token()
 
-        # Update Service Access information
-        ServiceAccessManager.api_user_token_key = \
-            self.redisGet(RedisVars.RedisVar_UserTokenAPIKey)
-        ServiceAccessManager.api_participant_token_key = \
-            self.redisGet(RedisVars.RedisVar_ParticipantTokenAPIKey)
-        ServiceAccessManager.api_participant_static_token_key = \
-            self.redisGet(RedisVars.RedisVar_ParticipantStaticTokenAPIKey)
-        ServiceAccessManager.api_device_token_key = \
-            self.redisGet(RedisVars.RedisVar_DeviceTokenAPIKey)
-        ServiceAccessManager.api_device_static_token_key = \
-            self.redisGet(RedisVars.RedisVar_DeviceStaticTokenAPIKey)
-        ServiceAccessManager.api_service_token_key = \
-            self.redisGet(RedisVars.RedisVar_ServiceTokenAPIKey)
-        ServiceAccessManager.config_man = config_man
+        # Init service access manager
+        ServiceAccessManager.init_access_manager(service=self)
 
     def redisConnectionMade(self):
         print('*** ServiceOpenTera.redisConnectionMade for', self.config['name'])
@@ -67,8 +56,9 @@ class ServiceOpenTera(RedisClient):
         self.register_to_events()
 
     def setup_rpc_interface(self):
-        # Should be implemented in derived classes
-        pass
+        self.rpc_api['session_type_config'] = {'args': ['int:id_session_type'],
+                                               'returns': 'dict',
+                                               'callback': self.get_session_type_config_form}
 
     def register_to_events(self):
         # Should be implemented in derived classes
@@ -81,23 +71,21 @@ class ServiceOpenTera(RedisClient):
     def build_interface(self):
         # TODO not sure of the interface using UUID or name here...
         # Will do  both!
-        ret1 = yield self.subscribe_pattern_with_callback(
+        yield self.subscribe_pattern_with_callback(
             RedisVars.build_service_message_topic( self.service_info['service_uuid']), self.notify_service_messages)
 
-        ret2 = yield self.subscribe_pattern_with_callback(
+        yield self.subscribe_pattern_with_callback(
             RedisVars.build_service_message_topic(self.service_info['service_key']), self.notify_service_messages)
 
-        ret3 = yield self.subscribe_pattern_with_callback(
+        yield self.subscribe_pattern_with_callback(
             RedisVars.build_service_rpc_topic(self.service_info['service_uuid']), self.notify_service_rpc)
 
-        ret4 = yield self.subscribe_pattern_with_callback(
+        yield self.subscribe_pattern_with_callback(
             RedisVars.build_service_rpc_topic(self.service_info['service_key']), self.notify_service_rpc)
 
-        print(ret1, ret2, ret3, ret4)
-
     def notify_service_rpc(self, pattern, channel, message):
-        import threading
-        print('ServiceOpenTera - Received rpc', self, pattern, channel, message, ' thread:', threading.current_thread())
+        # import threading
+        # print('ServiceOpenTera - Received rpc', self, pattern, channel, message, ' thread:', threading.current_thread())
 
         rpc_message = messages.RPCMessage()
 
@@ -157,22 +145,52 @@ class ServiceOpenTera(RedisClient):
         return jwt.encode(payload, self.redisGet(RedisVars.RedisVar_ServiceTokenAPIKey), algorithm='HS256')
 
     def post_to_opentera(self, api_url: str, json_data: dict) -> Response:
-        # Synchronous call to OpenTera backend
-        url = "https://" + self.backend_hostname + ':' + str(self.backend_port) + api_url
-        request_headers = {'Authorization': 'OpenTera ' + self.service_token}
-        return post(url=url, verify=False, headers=request_headers, json=json_data)
+        return self.post_to_opentera_with_token(self.service_token, api_url, json_data)
 
     def get_from_opentera(self, api_url: str, params: dict) -> Response:
-        # Synchronous call to OpenTera backend
-        url = "https://" + self.backend_hostname + ':' + str(self.backend_port) + api_url
-        request_headers = {'Authorization': 'OpenTera ' + self.service_token}
-        return get(url=url, verify=False, headers=request_headers, params=params)
+        return self.get_from_opentera_with_token(self.service_token, api_url, params)
 
     def delete_from_opentera(self, api_url: str, params: dict) -> Response:
-        # Synchronous call to OpenTera backend
-        url = "https://" + self.backend_hostname + ':' + str(self.backend_port) + api_url
-        request_headers = {'Authorization': 'OpenTera ' + self.service_token}
-        return delete(url=url, verify=False, headers=request_headers, params=params)
+        return self.delete_from_opentera_with_token(self.service_token, api_url, params)
+
+    def get_from_opentera_with_token(self, token: str, api_url: str, params: dict = None,
+                                     additional_headers: dict = None) -> Response:
+        request_headers = {'Authorization': 'OpenTera ' + token}
+        if params is None:
+            params = {}
+
+        if additional_headers is not None:
+            request_headers.update(additional_headers)
+
+        backend_url = f"https://{self.backend_hostname}:{self.backend_port}"
+        # TODO fix verify=False
+        return get(url=backend_url + api_url, headers=request_headers, params=params, verify=False, timeout=10)
+
+    def post_to_opentera_with_token(self, token: str,  api_url: str, json_data: dict, params: dict = None,
+                                    additional_headers: dict = None) -> Response:
+        request_headers = {'Authorization': 'OpenTera ' + token}
+        if params is None:
+            params = {}
+
+        if additional_headers is not None:
+            request_headers.update(additional_headers)
+
+        backend_url = f"https://{self.backend_hostname}:{self.backend_port}"
+        # TODO fix verify=False
+        return post(url=backend_url + api_url, headers=request_headers, json=json_data, params=params, verify=False, timeout=10)
+
+    def delete_from_opentera_with_token(self, token: str, api_url: str, params: dict = None,
+                                        additional_headers: dict = None) -> Response:
+        request_headers = {'Authorization': 'OpenTera ' + token}
+        if params is None:
+            params = {}
+
+        if additional_headers is not None:
+            request_headers.update(additional_headers)
+
+        backend_url = f"https://{self.backend_hostname}:{self.backend_port}"
+        # TODO fix verify=False
+        return delete(url=backend_url + api_url, headers=request_headers, params=params, verify=False, timeout=10)
 
     def send_event_message(self, event, topic: str):
         message = self.create_event_message(topic)
@@ -180,6 +198,10 @@ class ServiceOpenTera(RedisClient):
         any_message.Pack(event)
         message.events.extend([any_message])
         return self.publish(message.header.topic, message.SerializeToString())
+
+    def send_service_event_message(self, event):
+        topic = RedisVars.build_service_event_topic(self.service_info['service_key'])
+        self.send_event_message(event, topic)
 
     def create_event_message(self, topic):
         event_message = messages.TeraEvent()
@@ -203,3 +225,7 @@ class ServiceOpenTera(RedisClient):
         tera_message.head.source = src
         tera_message.head.dest = dest
         return tera_message
+
+    def get_session_type_config_form(self, id_session_type: int) -> dict:
+        # Default session type config form for services
+        return {}

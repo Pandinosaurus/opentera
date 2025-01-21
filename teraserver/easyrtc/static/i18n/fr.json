@@ -11,7 +11,9 @@
 		"video2": "Source Vidéo Secondaire",
 		"audio2": "Source Audio Secondaire",
 		"mirror": "Image Miroir",
-		"none": "Aucune"
+		"none": "Aucune",
+		"screenaudio": "Partager audio écran",
+		"blur": "Flouter l'arrière-plan"
 	},
 	"chronosDialog": {
 		"title": "Chronomètres",
@@ -29,6 +31,14 @@
 		"start": "Démarrer",
 		"cancel": "Annuler",
 		"completed": "Terminé!",
+		"all": "Tous",
+		"self": "Seulement moi"
+	},
+	"counterDialog": {
+		"title": "Compteurs",
+		"participants": "Participant(s)",
+		"start": "Démarrer",
+		"cancel": "Annuler",
 		"all": "Tous",
 		"self": "Seulement moi"
 	},
@@ -72,6 +82,7 @@
 		"speaker-all": "Son - Tous",
 		"tools": "Outils",
 		"chronos": "Chronos",
+		"counter": "Compteurs",
 		"measures": "Mesures",
 		"zoom": "Zoom",
 		"zoom-max": "Max",
@@ -83,6 +94,23 @@
 		"preset-2": "Position 2",
 		"preset-3": "Position 3",
 		"screenof": "Écran -",
-		"cameraof": "Caméra -"
+		"cameraof": "Caméra -",
+		"music": "Partage musique",
+		"star": "Focus pour tous sur ce vidéo",
+		"swap": "Agrandir le vidéo (pour moi)",
+		"play": "Démarrer",
+		"stop": "Arrêter",
+		"pause": "Pause",
+		"minus": "Diminuer",
+		"plus": "Augmenter",
+		"config": "Paramètres",
+		"micro": "Activer/désactiver Microphone",
+		"camera": "Activer/désactiver Caméra",
+		"speaker": "Activer/désactiver Son",
+		"cam-change": "Changer de caméra",
+		"cam-settings": "Paramètres de caméra",
+		"cam-second": "Activer/désactiver source vidéo secondaire",
+		"share-screen": "Activer/désactiver le partage d'écran",
+		"music-icon": "Activer/désactiver le partage de musique"
 	}
 }

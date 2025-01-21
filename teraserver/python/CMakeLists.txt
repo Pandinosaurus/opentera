@@ -1,5 +1,5 @@
 #TODO MAKE THIS GENERIC
-set (PYTHON_VERSION 3.10)
+set (PYTHON_VERSION 3.11)
 
 # This will create environment from Anaconda
 add_subdirectory(env)
@@ -39,6 +39,10 @@ add_custom_target(
     COMMAND ${PYBABEL_EXECUTABLE} update -i ${translation_pot_file} -d translations
     COMMAND ${PYBABEL_EXECUTABLE} compile -d translations
     DEPENDS python-env ${PYBABEL_EXECUTABLE}
+    DEPENDS videorehabservice-python-translations
+    DEPENDS loggingservice-python-translations
+    DEPENDS filetransferservice-python-translations
+    DEPENDS emailservice-python-translations
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     SOURCES babel.cfg
 )
@@ -53,6 +57,10 @@ add_custom_target(
     # COMMAND ${PYBABEL_EXECUTABLE} update -i ${translation_pot_file} -d translations
     COMMAND ${PYBABEL_EXECUTABLE} compile -d translations
     DEPENDS python-env ${PYBABEL_EXECUTABLE}
+    DEPENDS videorehabservice-python-translations-compile-only
+    DEPENDS loggingservice-python-translations-compile-only
+    DEPENDS filetransferservice-python-translations-compile-only
+    DEPENDS emailservice-python-translations-compile-only
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     SOURCES babel.cfg
 )
@@ -63,7 +71,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/opentera/OpenTeraServerVersion.py.in 
 add_custom_target(python-server-version SOURCES opentera/OpenTeraServerVersion.py.in)
 
 # Will always be considered out of date...
-add_custom_target(python-all DEPENDS python-env python-messages python-server-version python-translations-compile-only opentera/OpenTeraServerVersion.py)
+add_custom_target(python-all ALL DEPENDS python-env python-messages python-server-version python-translations-compile-only opentera/OpenTeraServerVersion.py)
 
 # Build this target if you want to update translations too...
 add_custom_target(python-all-with-translations DEPENDS python-all python-translations)

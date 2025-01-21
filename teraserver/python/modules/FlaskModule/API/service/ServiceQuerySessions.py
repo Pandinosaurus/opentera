@@ -1,14 +1,16 @@
+from datetime import datetime
+
 from flask import request
-from flask_restx import Resource, inputs  # , reqparse
+from flask_restx import Resource, inputs
 from flask_babel import gettext
+
+from sqlalchemy.exc import InvalidRequestError
+from sqlalchemy import exc
+
 from modules.LoginModule.LoginModule import LoginModule, current_service
 from modules.FlaskModule.FlaskModule import service_api_ns as api
 from modules.DatabaseModule.DBManager import DBManager
 from opentera.db.models.TeraParticipant import TeraParticipant
-from sqlalchemy.exc import InvalidRequestError
-from sqlalchemy import exc
-from datetime import datetime
-
 from opentera.db.models.TeraSession import TeraSession, TeraSessionStatus
 from opentera.db.models.TeraSessionType import TeraSessionType
 from opentera.db.models.TeraUser import TeraUser
@@ -21,21 +23,26 @@ get_parser.add_argument('uuid_session', type=str, help='UUID of the session to q
 get_parser.add_argument('id_participant', type=int, help='ID of the participant to query')
 get_parser.add_argument('id_user', type=int, help='ID of the user to query')
 get_parser.add_argument('id_device', type=int, help='ID of the device to query')
-get_parser.add_argument('list', type=inputs.boolean, help='Flag that limits the returned data to minimal information')
+get_parser.add_argument('list', type=inputs.boolean,
+                        help='Flag that limits the returned data to minimal information')
 get_parser.add_argument('with_events', type=inputs.boolean, help='Also includes session events')
-get_parser.add_argument('with_session_type', type=inputs.boolean, help='Also includes session type information')
+get_parser.add_argument('with_session_type', type=inputs.boolean,
+                        help='Also includes session type information')
 get_parser.add_argument('status', type=int, help='Limit to specific session status')
 get_parser.add_argument('limit', type=int, help='Maximum number of results to return')
-get_parser.add_argument('offset', type=int, help='Number of items to ignore in results, offset from 0-index')
-get_parser.add_argument('start_date', type=inputs.date, help='Start date, sessions before that date will be ignored')
-get_parser.add_argument('end_date', type=inputs.date, help='End date, sessions after that date will be ignored')
+get_parser.add_argument('offset', type=int,
+                        help='Number of items to ignore in results, offset from 0-index')
+get_parser.add_argument('start_date', type=inputs.date,
+                        help='Start date, sessions before that date will be ignored')
+get_parser.add_argument('end_date', type=inputs.date,
+                        help='End date, sessions after that date will be ignored')
 
 post_parser = api.parser()
 post_schema = api.schema_model('user_session', {'properties': TeraSession.get_json_schema(),
                                                 'type': 'object',
                                                 'location': 'json'})
 
-# delete_parser = reqparse.RequestParser()
+# delete_parser =  api.parser()
 # delete_parser.add_argument('id', type=int, help='Session ID to delete', required=True)
 
 
@@ -47,16 +54,19 @@ class ServiceQuerySessions(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @LoginModule.service_token_or_certificate_required
-    @api.expect(get_parser)
     @api.doc(description='Return sessions information.',
              responses={200: 'Success',
                         500: 'Required parameter is missing',
                         501: 'Not implemented.',
-                        403: 'Logged service doesn\'t have permission to access the requested data'})
+                        403: 'Service doesn\'t have permission to access the requested data'},
+             params={'token': 'Access token'})
+    @api.expect(get_parser)
+    @LoginModule.service_token_or_certificate_required
     def get(self):
-        parser = get_parser
-        args = parser.parse_args()
+        """
+        Get sessions
+        """
+        args = get_parser.parse_args()
 
         service_access = DBManager.serviceAccess(current_service)
 
@@ -121,17 +131,20 @@ class ServiceQuerySessions(Resource):
                                          'get', 500, 'InvalidRequestError', str(e))
             return gettext('Invalid request'), 500
 
-    @LoginModule.service_token_or_certificate_required
     @api.doc(description='Create / update session. id_session must be set to "0" to create a new '
                          'session.',
              responses={200: 'Success',
                         403: 'Service can\'t create/update the specified session',
                         400: 'Badly formed JSON or missing fields(session, id_session, session_participants_ids and/or '
                              'session_users_ids[for new sessions]) in the JSON body',
-                        500: 'Internal error when saving session'})
+                        500: 'Internal error when saving session'},
+             params={'token': 'Access token'})
     @api.expect(post_schema)
+    @LoginModule.service_token_or_certificate_required
     def post(self):
-
+        """
+        Create / update session
+        """
         if 'session' not in request.json:
             return gettext('Missing session'), 400
 
@@ -254,12 +267,13 @@ class ServiceQuerySessions(Resource):
 
         return [update_session.to_json()]
 
-    # @LoginModule.service_token_or_certificate_required
-    # @api.expect(delete_parser)
     # @api.doc(description='Delete a specific session',
     #          responses={200: 'Success',
     #                     403: 'Service can\'t delete session',
-    #                     500: 'Database error.'})
+    #                     500: 'Database error.'},
+    #          params={'token': 'Secret token'})
+    # @api.expect(delete_parser)
+    # @LoginModule.service_token_or_certificate_required
     # def delete(self):
     #     parser = delete_parser
     #

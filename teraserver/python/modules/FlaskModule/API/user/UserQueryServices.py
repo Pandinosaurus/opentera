@@ -1,12 +1,9 @@
-from flask import jsonify, session, request
+from flask import jsonify, request
 from flask_restx import Resource, reqparse, inputs
-
-from opentera.db.models import TeraServiceProject
-from modules.LoginModule.LoginModule import user_multi_auth
+from modules.LoginModule.LoginModule import user_multi_auth, current_user
 from modules.FlaskModule.FlaskModule import user_api_ns as api
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy import exc
-from opentera.db.models.TeraUser import TeraUser
 from opentera.db.models.TeraService import TeraService
 from opentera.db.models.TeraServiceRole import TeraServiceRole
 from modules.DatabaseModule.DBManager import DBManager
@@ -25,9 +22,7 @@ get_parser.add_argument('key', type=str, help='Alias for "service_key"')
 get_parser.add_argument('list', type=inputs.boolean, help='Flag that limits the returned data to minimal information')
 get_parser.add_argument('with_config', type=inputs.boolean, help='Only return services with editable configuration')
 
-
-# post_parser = reqparse.RequestParser()
-# post_parser.add_argument('service', type=str, location='json', help='Service to create / update', required=True)
+post_parser = api.parser()
 post_schema = api.schema_model('user_service', {'properties': TeraService.get_json_schema(),
                                                 'type': 'object',
                                                 'location': 'json'})
@@ -43,13 +38,15 @@ class UserQueryServices(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @user_multi_auth.login_required
-    @api.expect(get_parser)
     @api.doc(description='Get services information. Only one of the ID parameter is supported and required at once.',
              responses={200: 'Success - returns list of services',
                         500: 'Database error'})
+    @api.expect(get_parser)
+    @user_multi_auth.login_required
     def get(self):
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Get services
+        """
         user_access = DBManager.userAccess(current_user)
         args = get_parser.parse_args()
 
@@ -107,8 +104,6 @@ class UserQueryServices(Resource):
                                          'get', 500, 'InvalidRequestError', str(e))
             return gettext('Invalid request'), 500
 
-    @user_multi_auth.login_required
-    @api.expect(post_schema)
     @api.doc(description='Create / update services. id_service must be set to "0" to create a new '
                          'service. A service can be created/modified only by super-admins. If data contains "roles", '
                          'also update the roles with the list.',
@@ -116,10 +111,12 @@ class UserQueryServices(Resource):
                         403: 'Logged user can\'t create/update the specified service',
                         400: 'Badly formed JSON or missing fields(id_service) in the JSON body',
                         500: 'Internal error occured when saving service'})
+    @api.expect(post_schema)
+    @user_multi_auth.login_required
     def post(self):
-        # parser = post_parser
-
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Create / update services
+        """
         user_access = DBManager.userAccess(current_user)
 
         # Check if user is a super admin
@@ -170,6 +167,9 @@ class UserQueryServices(Resource):
                 return gettext('Invalid config json schema'), 400
         else:
             # New
+            if 'service_key' not in json_service:
+                return gettext('Missing service_key'), 400
+
             try:
                 new_service = TeraService()
                 new_service.from_json(json_service)
@@ -215,20 +215,20 @@ class UserQueryServices(Resource):
 
         return [update_service.to_json()]
 
-    @user_multi_auth.login_required
-    @api.expect(delete_parser)
     @api.doc(description='Delete a specific service',
              responses={200: 'Success',
                         400: 'Service doesn\'t exists',
                         403: 'Logged user can\'t delete service (only super admins can delete) or service is a system '
                              'service',
                         500: 'Database error.'})
+    @api.expect(delete_parser)
+    @user_multi_auth.login_required
     def delete(self):
-        parser = delete_parser
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Delete service
+        """
         user_access = DBManager.userAccess(current_user)
-
-        args = parser.parse_args()
+        args = delete_parser.parse_args()
         id_todel = args['id']
 
         # Check if current user can delete
@@ -246,6 +246,15 @@ class UserQueryServices(Resource):
         # If we are here, we are allowed to delete. Do so.
         try:
             TeraService.delete(id_todel=id_todel)
+        except exc.IntegrityError as e:
+            # Causes that could make an integrity error when deleting:
+            # - Sessions of that service exists
+            # - Tests of that service exists
+            # - Assets of that service exists
+            self.module.logger.log_warning(self.module.module_name, UserQueryServices.__name__, 'delete', 500,
+                                           'Integrity error', str(e))
+            return gettext('Can\'t delete service: please delete all sessions, assets and tests related to '
+                           'that service beforehand.'), 500
         except exc.SQLAlchemyError as e:
             import sys
             print(sys.exc_info())

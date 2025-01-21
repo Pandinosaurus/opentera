@@ -17,6 +17,7 @@ from twisted.internet import defer
 from modules.ParticipantEventManager import ParticipantEventManager
 
 from modules.TwistedModule.TeraWebSocketServerProtocol import TeraWebSocketServerProtocol
+from opentera.redis.RedisVars import RedisVars
 
 
 class TeraWebSocketServerParticipantProtocol(TeraWebSocketServerProtocol):
@@ -34,19 +35,25 @@ class TeraWebSocketServerParticipantProtocol(TeraWebSocketServerProtocol):
         # print(ret)
 
         if self.participant:
-            # This will wait until subscribe result is available...
-            # Register only once to events from modules, will be filtered after
-            # ret = yield self.subscribe(create_module_event_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME))
-            ret1 = yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            # Events from UserManagerModule
+            yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
                 ModuleNames.USER_MANAGER_MODULE_NAME), self.redis_event_message_received)
 
-            ret2 = yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            # Events from FlaskModule
+            yield self.subscribe_pattern_with_callback(
+                create_module_event_topic_from_name(ModuleNames.TWISTED_MODULE_NAME, self.participant.participant_uuid),
+                self.redis_tera_module_message_received)
+
+            # Events from FileTransferService
+            yield self.subscribe_pattern_with_callback(
+                RedisVars.build_service_event_topic('FileTransferService'), self.redis_event_message_received)
+
+            # Events from DatabaseModule
+            yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
                 ModuleNames.DATABASE_MODULE_NAME), self.redis_event_message_received)
 
             # Direct events
-            ret3 = yield self.subscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
-
-            print(ret1, ret2, ret3)
+            yield self.subscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
 
             # MAKE SURE TO SUBSCRIBE TO EVENTS BEFORE SENDING ONLINE MESSAGE
             tera_message = self.create_tera_message(
@@ -68,7 +75,6 @@ class TeraWebSocketServerParticipantProtocol(TeraWebSocketServerProtocol):
         else:
             print(type(self).__name__, ' - closing - unauthorized.')
             super().onClose(False, None, None)
-
 
     def onConnect(self, request):
         """
@@ -132,28 +138,31 @@ class TeraWebSocketServerParticipantProtocol(TeraWebSocketServerProtocol):
             self.publish(create_module_message_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME),
                          tera_message.SerializeToString())
 
-            # Unsubscribe to events
-            # ret = yield self.unsubscribe(create_module_event_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME))
-            ret1 = yield self.unsubscribe_pattern_with_callback(
+            # Events from UserManagerModule
+            yield self.unsubscribe_pattern_with_callback(
                 create_module_event_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME),
                 self.redis_event_message_received)
 
-            ret2 = yield self.unsubscribe_pattern_with_callback(
+            # Events from FlaskModule
+            yield self.unsubscribe_pattern_with_callback(
+                create_module_event_topic_from_name(ModuleNames.TWISTED_MODULE_NAME, self.participant.participant_uuid),
+                self.redis_tera_module_message_received)
+
+            # Events from DatabaseModule
+            yield self.unsubscribe_pattern_with_callback(
                 create_module_event_topic_from_name(ModuleNames.DATABASE_MODULE_NAME),
                 self.redis_event_message_received)
 
-            ret3 = yield self.unsubscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
+            # Events from FileTransferService
+            yield self.unsubscribe_pattern_with_callback(
+                RedisVars.build_service_event_topic('FileTransferService'), self.redis_event_message_received)
+
+            # Direct events
+            yield self.unsubscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
 
             # log information
             self.logger.log_info(self, "Participant websocket disconnected",
                                  self.participant.participant_name, self.participant.participant_uuid)
-
-            print(ret1, ret2, ret3)
-
-        # Unsubscribe to messages
-        # ret = yield self.unsubscribe(self.answer_topic())
-        # ret = yield self.unsubscribe_pattern_with_callback(self.answer_topic(), self.redis_tera_message_received)
-        # print(ret)
 
         super().onClose(wasClean, code, reason)
 

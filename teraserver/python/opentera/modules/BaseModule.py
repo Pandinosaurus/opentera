@@ -64,6 +64,9 @@ class BaseModule(RedisClient):
         message.events.extend([any_message])
         self.publish(message.header.topic, message.SerializeToString())
 
+    def send_module_message(self, message: messages.TeraModuleMessage):
+        self.publish(message.head.dest, message.SerializeToString())
+
     def redisConnectionMade(self):
         print('*************************** BaseModule.connectionMade', self.module_name)
 
@@ -167,7 +170,47 @@ class BaseModule(RedisClient):
         event_message.header.topic = topic
         return event_message
 
+    def create_module_message(self, src, dest):
+        """
+            message Header {
+            uint32 version = 1;
+            double time = 2;
+            uint32 seq = 3;
+            string source = 4;
+            string dest = 5;
+        }
+        Header head = 1;
+        repeated google.protobuf.Any data = 2;
+        """
+
+        module_message = messages.TeraModuleMessage()
+        module_message.head.version = 1
+        module_message.head.time = datetime.datetime.now().timestamp()
+        module_message.head.seq = 0
+        module_message.head.source = src
+        module_message.head.dest = dest
+        return module_message
+
     def source_name(self):
         return "module." + self.module_name + ".messages"
 
+    def _send_disconnect_module_message(self, uuid: str):
+        module_message = self.create_module_message(
+            src='module.' + self.module_name + '.messages',
+            dest=create_module_event_topic_from_name(ModuleNames.TWISTED_MODULE_NAME, uuid)
+        )
+        server_command = messages.ServerCommand()
+        server_command.type = messages.ServerCommand.CMD_CLIENT_DISCONNECT
+        command_message = messages.Any()
+        command_message.Pack(server_command)
+        module_message.data.extend([command_message])
+        self.send_module_message(module_message)
 
+    def send_user_disconnect_module_message(self, user_uuid: str):
+        self._send_disconnect_module_message(user_uuid)
+
+    def send_participant_disconnect_module_message(self, participant_uuid: str):
+        self._send_disconnect_module_message(participant_uuid)
+
+    def send_device_disconnect_module_message(self, device_uuid: str):
+        self._send_disconnect_module_message(device_uuid)

@@ -1,9 +1,7 @@
-from flask import session
 from flask_restx import Resource, inputs
 from flask_babel import gettext
-from modules.LoginModule.LoginModule import participant_multi_auth
+from modules.LoginModule.LoginModule import participant_multi_auth, current_participant
 from modules.FlaskModule.FlaskModule import participant_api_ns as api
-from opentera.db.models.TeraParticipant import TeraParticipant
 from modules.DatabaseModule.DBManager import DBManager
 
 # Parser definition(s)
@@ -21,20 +19,22 @@ class ParticipantQueryParticipants(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @participant_multi_auth.login_required(role='limited')
-    @api.expect(get_parser)
     @api.doc(description='Return participant information.',
              responses={200: 'Success',
                         500: 'Required parameter is missing',
                         501: 'Not implemented.',
-                        403: 'Logged user doesn\'t have permission to access the requested data'})
+                        403: 'Logged user doesn\'t have permission to access the requested data'},
+             params={'token': 'Access token'})
+    @api.expect(get_parser)
+    @participant_multi_auth.login_required(role='limited')
     def get(self):
-        current_participant = TeraParticipant.get_participant_by_uuid(session['_user_id'])
+        """
+        Get current participant informations
+        """
         participant_access = DBManager.participantAccess(current_participant)
+        args = get_parser.parse_args(strict=True)
 
         if current_participant.fullAccess:
-            args = get_parser.parse_args(strict=True)
-
             minimal = False
             if args['list']:
                 minimal = True
@@ -43,13 +43,16 @@ class ParticipantQueryParticipants(Resource):
         else:
             return {'participant_name': current_participant.participant_name}
 
-    @participant_multi_auth.login_required(role='full')
-    @api.expect(post_parser)
     @api.doc(description='To be documented '
                          'To be documented',
              responses={200: 'Success - To be documented',
                         500: 'Required parameter is missing',
                         501: 'Not implemented.',
                         403: 'Logged user doesn\'t have permission to access the requested data'})
+    @api.expect(post_parser)
+    @participant_multi_auth.login_required(role='full')
     def post(self):
+        """
+        Update current participant informations
+        """
         return gettext('Not implemented'), 501

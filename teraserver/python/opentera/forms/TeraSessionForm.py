@@ -14,7 +14,7 @@ class TeraSessionForm:
         form = TeraForm("session")
 
         # If not allowed to access that session or new session, will return all accessibles lists
-        if specific_session_id and not user_access.query_session(specific_session_id):  # specific_session_id not in user_access.get_accessible_sessions_ids():
+        if specific_session_id and not user_access.query_session(specific_session_id):
             specific_session_id = None
 
         session_info = None
@@ -49,7 +49,7 @@ class TeraSessionForm:
         if not project_info:
             users = user_access.get_accessible_users()
         else:
-            users = project_info.get_users_in_project(include_site_access=True)
+            users = project_info.get_users_in_project(include_superadmins=True, include_site_access=True)
 
         users_list = []
         users_ids = []

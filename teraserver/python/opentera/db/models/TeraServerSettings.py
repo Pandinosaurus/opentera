@@ -1,22 +1,23 @@
-from opentera.db.Base import db, BaseModel
+from opentera.db.Base import BaseModel
+from sqlalchemy import Column, Integer, String, Sequence
 import string
 from string import digits, ascii_lowercase, ascii_uppercase
-import random
+import secrets
 import uuid
 
 
-class TeraServerSettings(db.Model, BaseModel):
+class TeraServerSettings(BaseModel):
     __tablename__ = 't_server_settings'
-    id_server_settings = db.Column(db.Integer, db.Sequence('id_server_settings_sequence'), primary_key=True,
-                                   autoincrement=True)
-    server_settings_name = db.Column(db.String, nullable=False, unique=True)
-    server_settings_value = db.Column(db.String, nullable=False, unique=False)
+    id_server_settings = Column(Integer, Sequence('id_server_settings_sequence'), primary_key=True, autoincrement=True)
+    server_settings_name = Column(String, nullable=False, unique=True)
+    server_settings_value = Column(String, nullable=False, unique=False)
 
     # Constants
     ServerDeviceTokenKey = "TokenEncryptionKey"
     ServerParticipantTokenKey = "ParticipantTokenEncryptionKey"
     ServerUUID = "ServerUUID"
     ServerVersions = "ServerVersions"
+    ServerDeviceRegisterKey = "DeviceRegisterKey"
 
     @staticmethod
     def create_defaults(test=False):
@@ -28,6 +29,9 @@ class TeraServerSettings(db.Model, BaseModel):
         TeraServerSettings.set_server_setting(TeraServerSettings.ServerParticipantTokenKey,
                                               TeraServerSettings.generate_token_key(32))
 
+        TeraServerSettings.set_server_setting(TeraServerSettings.ServerDeviceRegisterKey,
+                                              TeraServerSettings.generate_token_key(10))
+
         # Unique server id
         server_uuid = str(uuid.uuid4())
         TeraServerSettings.set_server_setting(TeraServerSettings.ServerUUID, server_uuid)
@@ -35,7 +39,7 @@ class TeraServerSettings(db.Model, BaseModel):
     @staticmethod
     def generate_token_key(length: int) -> str:
         token_symbols = digits + ascii_uppercase + ascii_lowercase
-        token_key = ''.join(random.choice(token_symbols) for i in range(length))  # Key length = 32 chars
+        token_key = ''.join(secrets.choice(token_symbols) for i in range(length))  # Key length = 32 chars
         return token_key
 
     @staticmethod
@@ -64,6 +68,14 @@ class TeraServerSettings(db.Model, BaseModel):
             current_setting.id_server_settings = None
             current_setting.server_settings_name = setting_name
             current_setting.server_settings_value = setting_value
-            db.session.add(current_setting)
+            TeraServerSettings.db().session.add(current_setting)
         # Store object
         current_setting.commit()
+
+    def to_json_create_event(self):
+        return self.to_json(ignore_fields=['ServerDeviceTokenKey', 'ServerParticipantTokenKey', 'ServerUUID',
+                                           'ServerVersions', 'ServerDeviceRegisterKey'])
+
+    def to_json_update_event(self):
+        return self.to_json(ignore_fields=['ServerDeviceTokenKey', 'ServerParticipantTokenKey', 'ServerUUID',
+                                           'ServerVersions', 'ServerDeviceRegisterKey'])

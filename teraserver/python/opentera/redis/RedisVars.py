@@ -25,6 +25,9 @@ class RedisVars:
     # User login attempt counter prefix
     RedisVar_UserLoginAttemptKey = "UserLoginAttempts."
 
+    # User 2FA attempt counter prefix
+    RedisVar_User2FALoginAttemptKey = "User2FALoginAttempts."
+
     # Participant login attempt counter prefix
     RedisVar_ParticipantLoginAttemptKey = "ParticipantLoginAttempts."
 
@@ -35,3 +38,8 @@ class RedisVars:
     @classmethod
     def build_service_message_topic(cls, service_key) -> str:
         return cls.RedisVar_ServicePrefixKey + service_key + '.messages'
+
+    @classmethod
+    def build_service_event_topic(cls, service_key) -> str:
+        """ Build service event topic from service key, used to subscribe events to a specific service. """
+        return cls.RedisVar_ServicePrefixKey + service_key + '.events'

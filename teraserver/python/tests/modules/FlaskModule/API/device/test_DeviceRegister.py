@@ -1,163 +1,251 @@
-import unittest
-import os
-from requests import get, post, delete
-import json
+from tests.modules.FlaskModule.API.device.BaseDeviceAPITest import BaseDeviceAPITest
+from opentera.db.models.TeraServerSettings import TeraServerSettings
+from opentera.db.models.TeraDevice import TeraDevice
+from opentera.db.models.TeraDeviceType import TeraDeviceType
+from opentera.db.models.TeraDeviceSubType import TeraDeviceSubType
 import opentera.crypto.crypto_utils as crypto
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 
 
-class DeviceRegisterTest(unittest.TestCase):
+class DeviceRegisterTest(BaseDeviceAPITest):
 
-    host = '127.0.0.1'
-    port = 40075
-    device_login_endpoint = '/api/device/login'
-    device_logout_endpoint = '/api/device/logout'
-    device_register_endpoint = '/api/device/register'
+    test_endpoint = '/api/device/register'
 
     def setUp(self):
-        pass
+        super().setUp()
+        self.sleep_time = 0
+        with self._flask_app.app_context():
+            self.device_register_key = (
+                TeraServerSettings.get_server_setting_value(TeraServerSettings.ServerDeviceRegisterKey)
+            )
 
     def tearDown(self):
-        pass
+        super().tearDown()
 
-    def _make_url(self, hostname, port, endpoint):
-        return 'https://' + hostname + ':' + str(port) + endpoint
-
-    def _token_auth(self, token):
-        url = self._make_url(self.host, self.port, self.device_login_endpoint)
-        request_headers = {'Authorization': 'OpenTera ' + token}
-        return get(url=url, verify=False, headers=request_headers)
-
-    def _certificate_auth(self, cert, key):
-        url = self._make_url(self.host, self.port, self.device_login_endpoint)
-        with open('cert.pem', 'wb') as f:
-            f.write(cert)
-
-        with open('key.pem', 'wb') as f:
-            f.write(key)
-
-        return get(url=url, verify=False, cert=('cert.pem', 'key.pem'))
-
-    def _token_auth_logout(self, token):
-        url = self._make_url(self.host, self.port, self.device_logout_endpoint)
-        request_headers = {'Authorization': 'OpenTera ' + token}
-        return get(url=url, verify=False, headers=request_headers)
-
-    def _request_with_http_auth(self, username, password, payload=None, endpoint=None):
-        if payload is None:
-            payload = {}
-        if endpoint is None:
-            endpoint = self.device_register_endpoint
-        url = self._make_url(self.host, self.port, endpoint)
-        return get(url=url, verify=False, auth=(username, password), params=payload)
-
-    def _delete_with_http_auth(self, username, password, id_to_del: int, endpoint=None):
-        if endpoint is None:
-            endpoint = self.device_register_endpoint
-        url = self._make_url(self.host, self.port, endpoint)
-
-        return delete(url=url, verify=False, auth=(username, password), params='id=' + str(id_to_del))
-
-    def _device_api_post(self, token, endpoint, **kwargs):
-        url = self._make_url(self.host, self.port, endpoint)
-
-        request_headers = {'Content-Type': 'application/json'}
-
-        # Handle auth if required
-        if token:
-            request_headers['Authorization'] = 'OpenTera ' + token
-
-        # post will convert dict to json automatically
-        return post(url=url, verify=False, headers=request_headers, json=kwargs)
-
-    def _device_api_certificate_post(self, cert, endpoint, **kwargs):
-        url = self._make_url(self.host, self.port, endpoint)
-        request_headers = {'Content-Type': 'application/octet-stream'}
-
-    def _device_api_register_certificate_post(self, csr, endpoint, **kwargs):
-        url = self._make_url(self.host, self.port, endpoint)
-        request_headers = {'Content-Type': 'application/octet-stream',
-                           'Content-Transfer-Encoding': 'Base64'}
-        return post(url=url, verify=False, headers=request_headers, data=csr)
-
-    def test_device_register_wrong_args_post(self):
-        response = self._device_api_post(None, self.device_register_endpoint)
-        self.assertEqual(response.status_code, 400)
-
-    def test_device_register_incomplete_post(self):
-        device_info = {'device_info': {'device_name': 'Device Name'}}
-        response = self._device_api_post(None, self.device_register_endpoint, **device_info)
+    def test_register_token_missing_args(self):
+        response = self._get_data_no_auth(self.test_client)
         self.assertEqual(400, response.status_code)
 
-        device_info = {'device_info': {'id_device_type': 0}}
-        response = self._device_api_post(None, self.device_register_endpoint, **device_info)
+    def test_register_token_bad_key(self):
+        data = {'key': 'Bad key',
+                'name': 'New Device',
+                'type_key': 'capteur'}
+        response = self._get_data_no_auth(self.test_client, params=data)
+        self.assertEqual(401, response.status_code)
+
+    def test_register_token_existing_device_key(self):
+        with self._flask_app.app_context():
+            device_type_key = TeraDeviceType.get_device_type_by_id(1).device_type_key
+            device_type_count = TeraDeviceType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key}
+            response = self._get_data_no_auth(self.test_client, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json)
+
+            device = TeraDevice.get_device_by_token(response.json['device_token'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertIsNone(device.id_device_subtype)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+
+    def test_register_token_existing_device_subtype(self):
+        with self._flask_app.app_context():
+            device_type_key = 'bureau_actif'
+            device_type_count = TeraDeviceType.get_count()
+            subtype_name = 'Bureau modèle #1'
+            subtype_count = TeraDeviceSubType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key,
+                    'subtype_name': subtype_name}
+            response = self._get_data_no_auth(self.test_client, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json)
+
+            device = TeraDevice.get_device_by_token(response.json['device_token'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+            self.assertEqual(subtype_name, device.device_subtype.device_subtype_name)
+            self.assertEqual(subtype_count, TeraDeviceSubType.get_count())
+
+    def test_register_token_new_device_key(self):
+        with self._flask_app.app_context():
+            device_type_key = 'New Token Device Type'
+            device_type_count = TeraDeviceType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key}
+            response = self._get_data_no_auth(self.test_client, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json)
+
+            device = TeraDevice.get_device_by_token(response.json['device_token'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertIsNone(device.id_device_subtype)
+            self.assertEqual(device_type_count+1, TeraDeviceType.get_count())
+
+    def test_register_token_new_device_subtype(self):
+        with self._flask_app.app_context():
+            device_type_key = 'bureau_actif'
+            device_type_count = TeraDeviceType.get_count()
+            subtype_name = 'Bureau modèle #4'
+            subtype_count = TeraDeviceSubType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key,
+                    'subtype_name': subtype_name}
+            response = self._get_data_no_auth(self.test_client, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json)
+
+            device = TeraDevice.get_device_by_token(response.json['device_token'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+            self.assertEqual(subtype_name, device.device_subtype.device_subtype_name)
+            self.assertEqual(subtype_count+1, TeraDeviceSubType.get_count())
+
+    def test_register_certificate_bad_key(self):
+        data = {'key': 'Bad key',
+                'name': 'New Device',
+                'type_key': 'capteur'}
+        response = self._post_data_no_auth(self.test_client, params=data)
+        self.assertEqual(401, response.status_code)
+
+    def test_register_certificate_missing_args(self):
+        response = self._post_data_no_auth(self.test_client)
         self.assertEqual(400, response.status_code)
 
-    def test_device_register_invalid_id_device_type(self):
-        device_info = {'device_info': {'device_name': 'Device Name', 'id_device_type': 0}}
-        response = self._device_api_post(None, self.device_register_endpoint, **device_info)
-        self.assertEqual(500, response.status_code)
+    def test_register_certificate_existing_device_key(self):
+        with self._flask_app.app_context():
+            device_type_key = TeraDeviceType.get_device_type_by_id(1).device_type_key
+            device_type_count = TeraDeviceType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key}
+            # This will generate private key and signing request for the CA
+            client_info = crypto.create_certificate_signing_request('Test Device with Certificate')
 
-    def test_device_register_ok_post(self):
-        device_info = {'device_info': {'device_name': 'Device Name', 'id_device_type': 1}}
-        response = self._device_api_post(None, self.device_register_endpoint, **device_info)
-        self.assertEqual(200, response.status_code)
+            # Encode in PEM format
+            encoded_csr = client_info['csr'].public_bytes(serialization.Encoding.PEM)
 
-        token_dict = json.loads(response.text)
-        self.assertTrue(token_dict.__contains__('token'))
-        self.assertGreater(len(token_dict['token']), 0)
+            response = self._post_data_no_auth(self.test_client, data=encoded_csr, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json, True)
 
-        # Validate that we cannot authenticate (device should be disabled)
-        response = self._token_auth(token_dict['token'])
-        self.assertEqual(response.status_code, 401)
+            device = TeraDevice.get_device_by_certificate(response.json['device_certificate'])
+            self.assertIsNotNone(device)
+            self.assertIsNotNone(device.device_certificate)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+            self.assertIsNone(device.id_device_subtype)
 
-        # Delete created device
-        response = self._request_with_http_auth(username='admin', password='admin', payload={'name': 'Device Name'},
-                                                endpoint='/api/user/devices')
-        self.assertTrue(response.status_code, 200)
-        id_device = response.json()[0]['id_device']
+    def test_register_certificate_existing_device_subtype(self):
+        with self._flask_app.app_context():
+            device_type_key = 'bureau_actif'
+            device_type_count = TeraDeviceType.get_count()
+            subtype_name = 'Bureau modèle #1'
+            subtype_count = TeraDeviceSubType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key,
+                    'subtype_name': subtype_name}
 
-        response = self._delete_with_http_auth(username='admin', password='admin', id_to_del=id_device,
-                                               endpoint='/api/user/devices')
-        self.assertTrue(response.status_code, 200)
+            # This will generate private key and signing request for the CA
+            client_info = crypto.create_certificate_signing_request('Test Device with Certificate')
 
-    def test_device_register_with_certificate_csr(self):
+            # Encode in PEM format
+            encoded_csr = client_info['csr'].public_bytes(serialization.Encoding.PEM)
 
-        # This is required since the server will throttle device creations
-        import time
-        time.sleep(1)
+            response = self._post_data_no_auth(self.test_client, data=encoded_csr, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json, True)
 
-        # This will generate private key and signing request for the CA
-        client_info = crypto.create_certificate_signing_request('Test Device with Certificate')
+            device = TeraDevice.get_device_by_certificate(response.json['device_certificate'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+            self.assertEqual(subtype_name, device.device_subtype.device_subtype_name)
+            self.assertEqual(subtype_count, TeraDeviceSubType.get_count())
 
-        # Encode in PEM format
-        encoded_csr = client_info['csr'].public_bytes(serialization.Encoding.PEM)
+    def test_register_certificate_new_device_key(self):
+        with self._flask_app.app_context():
+            device_type_key = 'New Device Type'
+            device_type_count = TeraDeviceType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key}
+            # This will generate private key and signing request for the CA
+            client_info = crypto.create_certificate_signing_request('Test Device with Certificate')
 
-        response = self._device_api_register_certificate_post(encoded_csr, self.device_register_endpoint)
-        self.assertEqual(response.status_code, 200)
+            # Encode in PEM format
+            encoded_csr = client_info['csr'].public_bytes(serialization.Encoding.PEM)
 
-        result = response.json()
-        self.assertTrue('ca_info' in result)
-        self.assertTrue('certificate' in result)
+            response = self._post_data_no_auth(self.test_client, data=encoded_csr, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json, True)
 
-        certificate = result['certificate'].encode('utf-8')
-        private_key = client_info['private_key'].private_bytes(serialization.Encoding.PEM,
-                                                               serialization.PrivateFormat.TraditionalOpenSSL,
-                                                               serialization.NoEncryption())
+            device = TeraDevice.get_device_by_certificate(response.json['device_certificate'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertIsNone(device.id_device_subtype)
+            self.assertEqual(device_type_count + 1, TeraDeviceType.get_count())
 
-        # print(certificate, private_key)
-        response = self._certificate_auth(certificate, private_key)
-        self.assertTrue(response.status_code, 200)
+    def test_register_certificate_new_device_subtype(self):
+        with self._flask_app.app_context():
+            device_type_key = 'bureau_actif'
+            device_type_count = TeraDeviceType.get_count()
+            subtype_name = 'Bureau modèle #3'
+            subtype_count = TeraDeviceSubType.get_count()
+            data = {'key': self.device_register_key,
+                    'name': 'New Device',
+                    'type_key': device_type_key,
+                    'subtype_name': subtype_name}
+            # This will generate private key and signing request for the CA
+            client_info = crypto.create_certificate_signing_request('Test Device with Certificate')
 
-        # Delete created device
-        response = self._request_with_http_auth(username='admin', password='admin',
-                                                payload={'name': 'Test Device with Certificate'},
-                                                endpoint='/api/user/devices')
-        self.assertTrue(response.status_code, 200)
-        id_device = response.json()[0]['id_device']
+            # Encode in PEM format
+            encoded_csr = client_info['csr'].public_bytes(serialization.Encoding.PEM)
 
-        response = self._delete_with_http_auth(username='admin', password='admin', id_to_del=id_device,
-                                               endpoint='/api/user/devices')
-        self.assertTrue(response.status_code, 200)
+            response = self._post_data_no_auth(self.test_client, data=encoded_csr, params=data)
+            self.assertEqual(200, response.status_code)
+            self._checkJson(response.json, True)
 
+            device = TeraDevice.get_device_by_certificate(response.json['device_certificate'])
+            self.assertIsNotNone(device)
+            self.assertEqual('New Device', device.device_name)
+            self.assertFalse(device.device_enabled)
+            self.assertEqual(device_type_key, device.device_type.device_type_key)
+            self.assertEqual(device_type_count, TeraDeviceType.get_count())
+            self.assertEqual(subtype_name, device.device_subtype.device_subtype_name)
+            self.assertEqual(subtype_count + 1, TeraDeviceSubType.get_count())
 
+    def _checkJson(self, json_data, certificate=False):
+        self.assertFalse(json_data.__contains__('id_device'))
+        self.assertFalse(json_data.__contains__('id_device_type'))
+        self.assertFalse(json_data.__contains__('id_device_subtype'))
+        self.assertTrue(json_data.__contains__('device_name'))
+        self.assertTrue(json_data.__contains__('device_uuid'))
+        self.assertTrue(json_data.__contains__('device_token'))
+        self.assertTrue(json_data.__contains__('device_enabled'))
+        if certificate:
+            self.assertTrue(json_data.__contains__('device_certificate'))
+            self.assertTrue(json_data.__contains__('ca_info'))

@@ -11,11 +11,13 @@
     <link rel="stylesheet" type="text/css" href="css/bootstrap/bootstrap.min.css" />
 
     <!-- Javascripts -->
-    <script src="js/jquery/jquery-3.5.1.min.js"></script>
+    <script src="js/jquery/jquery-3.7.1.min.js"></script>
     <script src="js/bootstrap/bootstrap.bundle.min.js"></script>
     <script src="js/socket.io.js"></script>
     <script src="easyrtc/easyrtc.js"></script>
     <script src="js/bowser/bowser.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
     <script src="js/tera_layout.js"></script>
     <script src="js/tera_main.js"></script>
@@ -27,6 +29,7 @@
     <script src="js/tera_medias.js"></script>
     <script src="js/tera_tools.js"></script>
     <script src="js/tera_screen_control.js"></script>
+    <script src="js/tera_processing.js"></script>
 
     <!-- Streams recorders -->
     <script src="js/recordrtc/RecordRTC.js"></script>
@@ -80,6 +83,10 @@
                     <label for="videoSelect" class="form-label" data-i18n="configDialog.video1">Source vidéo principale: </label>
                     <select id="videoSelect" class="form-control"></select>
                 </div>
+                <div class="form-group" id="blurGroup">
+                    <input type="checkbox" id="blurCheck" name="blurCheck" value="Blur" class="">
+                    <label for="blurCheck" class="form-label ml-1" data-i18n="configDialog.blur">Flouter l'arrière-plan</label>
+                </div>
                 <div class="form-group">
                     <label for="audioSelect" class="form-label" data-i18n="configDialog.audio1">Source audio principale: </label>
                     <select id="audioSelect" class="form-control"></select>
@@ -94,7 +101,9 @@
                 </div>
                 <div class="form-group">
                     <input type="checkbox" id="mirrorCheck" name="mirrorCheck" value="Mirror" class="">
-                    <label for="mirrorCheck" class="form-label ml-2" data-i18n="configDialog.mirror">Image Miroir</label>
+                    <label for="mirrorCheck" class="form-label ml-1" data-i18n="configDialog.mirror">Image Miroir</label>
+                    <input type="checkbox" id="screenAudioCheck" name="screenAudioCheck" value="ScreenAudio" class="ml-3">
+                    <label for="screenAudioCheck" class="form-label ml-1" data-i18n="configDialog.screenaudio">Share screen audio</label>
                 </div>
             </div>
             <div class="modal-footer">
@@ -119,16 +128,16 @@
                         <label for="chronosPartSelect" class="col-form-label col-4" data-i18n="chronosDialog.participants">Participant(s): </label>
                         <select id="chronosPartSelect" class="col combobox"></select>
                     </div>
-                    <div class="form-group row pr-2">
+                    <!--<div class="form-group row pr-2">
                         <label for="chronosTitleSelect" class="col-form-label col-4" data-i18n="chronosDialog.chrono-label">Libellé: </label>
                         <select id="chronosTitleSelect" class="col combobox">
                             <option value="" data-i18n="chronosDialog.label-none" selected>(Aucun)</option>
                             <option value="Exercices" data-i18n="chronosDialog.label-exercices">Exercices</option>
                             <option value="Repos" data-i18n="chronosDialog.label-rest">Repos</option>
                         </select>
-                    </div>
+                    </div>-->
                     <div class="form-group row pr-2">
-                        <label for="chronosTypeRadio" class="col-form-label col-4" data-i18n="chronosDialog.chrono-type">Type: </label>
+                        <label class="col-form-label col-4" data-i18n="chronosDialog.chrono-type">Type: </label>
                         <div id="chronosTypeRadio" class="col col-form-label pl-0">
                             <input id="optChronoType1" value=1 class="mr-1" type="radio" name="optChronoType" data-i18n="chronosDialog.chrono-countdown" checked /><label class="radio-inline pr-2" for="optChronoType1">Décompte</label>
                             <input id="optChronoType2" value=2 class="mr-1" type="radio" name="optChronoType" data-i18n="chronosDialog.chrono-countup" /><label class="radio-inline" for="optChronoType2">Chronomètre</label>
@@ -145,9 +154,9 @@
                             <option value="600">10:00</option>
                             <option value="900">15:00</option>
                         </select>-->
-                        <input id="chronosDurationMinutes" class="col-2" type="number" min="0" max="55" step="1" value="0" />
+                        <input id="chronosDurationMinutes" class="col-2" type="number" min="0" max="55" step="1" value="2" />
                         <label class="col-form-label col-2" data-i18n="chronosDialog.minutes">minutes</label>
-                        <input id="chronosDurationSeconds" class="col-2" type="number" min="0" max="55" step="5" value="30" />
+                        <input id="chronosDurationSeconds" class="col-2" type="number" min="0" max="55" step="5" value="0" />
                         <label class="col-form-label col-2" data-i18n="chronosDialog.seconds">secondes</label>
                     </div>
                 </form>
@@ -165,7 +174,7 @@
 <!-- Measurement dialog -->
 <div class="modal fade" id="measureDialog" tabindex="-1" role="dialog" aria-labelledby="measureDialogCenterTitle"
      aria-hidden="true">
-    <div class="modal-dialog large-modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-dialog draggable large-modal-dialog modal-dialog-centered" role="document">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="measureDialogLongTitle" data-i18n="measureDialog.title">Mesures</h5>
@@ -201,6 +210,33 @@
     </div>
 </div>
 
+<!-- CounterDialog -->
+<div class="modal fade" id="counterDialog" tabindex="-1" role="dialog" aria-labelledby="counterDialogCenterTitle"
+     aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="counterDialogLongTitle" data-i18n="counterDialog.title"></h5>
+
+            </div>
+            <div class="modal-body">
+                <form id="counterForm">
+                    <div class="form-group row pr-2">
+                        <label for="counterPartSelect" class="col-form-label col-4" data-i18n="counterDialog.participants">Participant(s): </label>
+                        <select id="counterPartSelect" class="col combobox"></select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="counterStart" class="btn btn-success" data-dismiss="modal"
+                        onclick="startCountersFromDialog();" data-i18n="counterDialog.start">
+                    Activer</button>
+                <button type="button" id="counterCancel" class="btn btn-primary" data-dismiss="modal" data-i18n="counterDialog.cancel">Annuler</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ErrorDialog -->
 <div class="modal fade" id="errorDialog" tabindex="-1" role="dialog" aria-labelledby="errorDialogCenterTitle"
      aria-hidden="true">
@@ -230,9 +266,9 @@
 
 <!-- Main container -->
 <div class="container-fluid h-100" id="mainContainer" style="display: none">
-    <span class="badge badge-danger text-white-50 w-100" id="recIndicator" style="display:none;" data-i18n="status.recording">Cette séance est présentement enregistrée.</span>
     <div class="row h-100" id="row1">
         <div class="d-flex flex-column col-3" id="localViews">
+            <span class="badge badge-danger text-white-50 w-100" id="recIndicator" style="display:none;" data-i18n="status.recording">Cette séance est présentement enregistrée.</span>
             <div class="row flex-grow-1" id="localView1Row">
                 <!------------------------------ LOCAL VIEW #1 -------------------------------------------------------->
                 <div class="col-12 videoView" id="localView1"
@@ -244,26 +280,40 @@
                     <!--<span class="badge badge-danger text-white-50" id="localViewRec1" style="display:none;">REC</span>-->
                     <!-- Video controls -->
                     <div id="localVideoControls1" class="overlay-top-right" style="">
-                        <input id="localBtnStar1" class="image-icon" type="image" alt="image" src="images/star.png" onclick="selectPrimaryView(true, 1);event.stopPropagation();" style="display: none;"/>
-                        <input id="localBtnSwapVideo1" class="image-icon" type="image" alt="image" src="images/swap.png" onclick="enlargeView(true,1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localBtnStar1" data-i18n-attr="title" data-i18n="ui.star" class="image-icon" type="image" alt="image" src="images/star.png" onclick="selectPrimaryView(true, 1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localBtnSwapVideo1" data-i18n-attr="title" data-i18n="ui.swap" class="image-icon" type="image" alt="image" src="images/swap.png" onclick="enlargeView(true,1);event.stopPropagation();" style="display: none;"/>
                     </div>
 
-                    <!-- Text display -->
-                    <div id="localDisplay1" class="overlay-top-center" style="display:none">
-                        <label class="chrono" id="localText1" onclick="stopChrono(true, 1);">Temps restant: xx:xx</label>
+                    <!-- Chrono display -->
+                    <div id="localTools" class="overlay-top-center">
+                        <div id="localChrono1" style="display:none">
+                            <label class="chrono" id="localChronoText1">xx:xx</label>
+                            <input class="image-icon chrono-button" data-i18n-attr="title" data-i18n="ui.play" id="localChronoPlay1" type="image" alt="image" src="images/play.png" onclick="startChrono();"/>
+                            <input class="image-icon chrono-button" data-i18n-attr="title" data-i18n="ui.pause" id="localChronoPause1" type="image" alt="image" src="images/pause.png" onclick="pauseChrono(true,1);"/>
+                            <input class="image-icon chrono-button" data-i18n-attr="title" data-i18n="ui.stop" id="localChronoStop1" type="image" alt="image" src="images/stop.png" onclick="stopChrono(true, 1);"/>
+                        </div>
+
+                        <!-- Counter display -->
+                        <div id="localCounter1" style="display:none">
+                            <input class="image-icon chrono-button" id="localCounterMinus1" data-i18n-attr="title" data-i18n="ui.minus" type="image" alt="image" src="images/minus.png" onclick="counterMinus(true, 1);"/>
+                            <label class="chrono counter" id="localCounterText1">00</label>
+                            <input class="image-icon chrono-button" id="localCounterPlus1" data-i18n-attr="title" data-i18n="ui.plus" type="image" alt="image" src="images/plus.png" onclick="counterPlus(true, 1);"/>
+                            <input class="image-icon chrono-button" id="localCounterStop1" data-i18n-attr="title" data-i18n="ui.stop" type="image" alt="image" src="images/stop.png" onclick="stopCounter(true, 1);"/>
+                        </div>
                     </div>
+
 
                     <!-- Micro, video, sensors, ... controls -->
                     <div id="localViewControls1" class="overlay-bottom-center">
-                        <input id="localConfig1" class="image-icon" type="image" alt="image" src="images/config.png" onclick="btnConfigClicked(true, 1);event.stopPropagation();" style="display: none;"/>
-                        <input id="localMicStatus1" class="image-icon" type="image" alt="image" src="images/mic.png" onclick="muteMicro(true,1);event.stopPropagation();" style="display: none;"/>
-                        <input id="localVideoStatus1" class="image-icon" type="image" alt="image" src="images/video.png" onclick="muteVideo(true,1);event.stopPropagation();" style="display: none;"/>
-                        <input id="localSpeakerStatus1" class="image-icon" type="image" alt="image" src="images/speaker.png" onclick="muteSpeaker(true,1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localConfig1" data-i18n-attr="title" data-i18n="ui.config" class="image-icon" type="image" alt="image" src="images/config.png" onclick="btnConfigClicked(true, 1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localMicStatus1" data-i18n-attr="title" data-i18n="ui.micro" class="image-icon" type="image" alt="image" src="images/mic.png" onclick="muteMicro(true,1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localVideoStatus1" data-i18n-attr="title" data-i18n="ui.camera" class="image-icon" type="image" alt="image" src="images/video.png" onclick="muteVideo(true,1);event.stopPropagation();" style="display: none;"/>
+                        <input id="localSpeakerStatus1" data-i18n-attr="title" data-i18n="ui.speaker" class="image-icon" type="image" alt="image" src="images/speaker.png" onclick="muteSpeaker(true,1);event.stopPropagation();" style="display: none;"/>
                     </div>
 
                     <!-- Video sources controls -->
                     <div id="localViewCameras1" class="mb-5 mb-md-0 overlay-bottom-left">
-                        <input id="localVideoSwap1" class="image-icon" type="image" alt="image" src="images/videoswap.png" onclick="swapVideoSource(true, 1); event.stopPropagation();" style="display:none;"/>
+                        <input id="localVideoSwap1" data-i18n-attr="title" data-i18n="ui.cam-change" class="image-icon" type="image" alt="image" src="images/videoswap.png" onclick="swapVideoSource(true, 1); event.stopPropagation();" style="display:none;"/>
                     </div>
 
                     <!-- PTZ controls -->
@@ -304,14 +354,14 @@
                             </div>
                         </div>
                         <div class="dropdown">
-                            <input class="btn bg-secondary text-light image-icon" id="localSettingsButton1" type="image" alt="image" src="images/settings.png" onclick="camSettings(true, 1);event.stopPropagation();" style="display: none;"/>
+                            <input class="btn bg-secondary text-light image-icon" id="localSettingsButton1" data-i18n-attr="title" data-i18n="ui.cam-settings" type="image" alt="image" src="images/settings.png" onclick="camSettings(true, 1);event.stopPropagation();" style="display: none;"/>
                         </div>
                     </div>
                     <!-- Sources controls -->
                     <div id="localSourcesControls1" class="overlay-bottom-right">
                         <div style="background-color:rgba(0,0,0,0);">
-                            <input id="localBtnShow2ndVideo1" class="image-icon" type="image" alt="image" src="images/show2ndvideo.png" onclick="btnShow2ndLocalVideoClicked();event.stopPropagation();" style="display: none;"/>
-                            <input id="localBtnShareScreen1" class="image-icon" type="image" alt="image" src="images/sharescreen.png" onclick="btnShareScreenClicked();event.stopPropagation();" style="display: none;"/>
+                            <input id="localBtnShow2ndVideo1" data-i18n-attr="title" data-i18n="ui.cam-second" class="image-icon" type="image" alt="image" src="images/show2ndvideo.png" onclick="btnShow2ndLocalVideoClicked();event.stopPropagation();" style="display: none;"/>
+                            <input id="localBtnShareScreen1" data-i18n-attr="title" data-i18n="ui.share-screen" class="image-icon" type="image" alt="image" data-sound-only="false" src="images/sharescreen.png" onclick="btnShareScreenClicked($('#localBtnShareScreen1').data().soundOnly);event.stopPropagation();" style="display: none;"/>
                         </div>
                     </div>
                     <!-- Video ! -->
@@ -331,13 +381,13 @@
 
                     <!-- Video controls -->
                     <div id="localVideoControls2" class="overlay-top-right" style="">
-                        <input id="localBtnStar2" class="image-icon" type="image" alt="image" src="images/star.png" onclick="selectPrimaryView(true, 2);event.stopPropagation();" style="display: none;"/>
-                        <input id="localBtnSwapVideo2" class="image-icon" type="image" alt="image" src="images/swap.png" onclick="enlargeView(true,2);event.stopPropagation();" style="display: none;"/>
+                        <input id="localBtnStar2" data-i18n-attr="title" data-i18n="ui.star" class="image-icon" type="image" alt="image" src="images/star.png" onclick="selectPrimaryView(true, 2);event.stopPropagation();" style="display: none;"/>
+                        <input id="localBtnSwapVideo2" data-i18n-attr="title" data-i18n="ui.swap" class="image-icon" type="image" alt="image" src="images/swap.png" onclick="enlargeView(true,2);event.stopPropagation();" style="display: none;"/>
                     </div>
 
                     <!-- Micro, video, sensors, ... controls -->
                     <div id="localViewControls2" class="overlay-bottom-center" >
-                        <input id="localMicStatus2" class="image-icon" type="image" alt="image" src="images/mic.png" onclick="muteMicro(true,2);event.stopPropagation();" style="display: none;"/>
+                        <input id="localMicStatus2" data-i18n-attr="title" data-i18n="ui.micro" class="image-icon" type="image" alt="image" src="images/mic.png" onclick="muteMicro(true,2);event.stopPropagation();" style="display: none;"/>
                         <!--<input id="localVideoStatus2" type="image" alt="image" src="images/video.png" height=32 onclick="muteVideo(true,2);event.stopPropagation();" style="display: none;"/>
                         <input id="localSpeakerStatus2" type="image" alt="image" src="images/speaker.png" height=32 onclick="muteSpeaker(true,2);event.stopPropagation();" style="display: none;"/>-->
                     </div>
@@ -368,18 +418,27 @@
                             </div>
                         </div>
                     </div>
-                    <div class="dropup">
-                        <button class="btn btn-primary dropdown-toggle" type="button" id="toolsDropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" data-i18n="ui.tools">
+                    <div class="dropup" id="toolDropup">
+                        <button class="btn btn-primary dropdown-toggle" type="button" id="toolsDropdown" data-toggle="dropdown"
+                                aria-haspopup="true" aria-expanded="false" data-i18n="ui.tools">
                             Outils
                         </button>
-                        <div class="dropdown-menu bg-primary" aria-labelledby="toolsDropdown" style="transform: translate3d(0px, 2px, 0px);">
+                        <div class="dropdown-menu bg-primary" id="toolsDropdownMenu" aria-labelledby="toolsDropdown" style="transform: translate3d(0px, 2px, 0px);">
                             <div class="dropdown-item" onclick="showChronosDialog();">
                                 <input class="tool-icon" id="btnChronos" type="image" alt="image" src="images/timer.png"/>
                                 <label data-i18n="ui.chronos">Chronos</label>
                             </div>
+                            <div class="dropdown-item" onclick="showCounterDialog();">
+                                <input class="tool-icon" id="btnCounter" type="image" alt="image" src="images/counter.png"/>
+                                <label data-i18n="ui.counter">Chronos</label>
+                            </div>
                             <div class="dropdown-item" onclick="showMeasuresDialog();">
                                 <input class="tool-icon" id="btnAngles" type="image" alt="image" src="images/angles.png"/>
                                 <label data-i18n="ui.measures">Mesures</label>
+                            </div>
+                            <div class="dropdown-item" onclick="btnShareScreenClicked(true);">
+                                <input class="tool-icon" id="btnMusic" type="image" alt="image" src="images/music.png"/>
+                                <label data-i18n="ui.music">Partage son</label>
                             </div>
                         </div>
                     </div>

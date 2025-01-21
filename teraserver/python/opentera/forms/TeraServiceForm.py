@@ -7,7 +7,7 @@ from flask_babel import gettext
 class TeraServiceForm:
 
     @staticmethod
-    def get_service_form(user_access: DBManagerTeraUserAccess):
+    def get_service_form():
         form = TeraForm("service")
 
         # Building lists
@@ -40,6 +40,8 @@ class TeraServiceForm:
                                       item_required=False))
         section.add_item(TeraFormItem("service_system", gettext("System Service"), "boolean", item_required=True))
         section.add_item(TeraFormItem("service_enabled", gettext("Service Enabled"), "boolean", item_required=True))
+        section.add_item(TeraFormItem("service_has_assets", gettext("Service Contains Assets"), "boolean", item_required=True))
+        section.add_item(TeraFormItem("service_has_tests", gettext("Service Contains Tests"), "boolean", item_required=True))
         section.add_item(TeraFormItem("service_editable_config", gettext("Service has editable config"), "boolean",
                                       item_required=False))
         section.add_item(TeraFormItem("service_default_config", gettext("Service Default Configuration"), "longtext",

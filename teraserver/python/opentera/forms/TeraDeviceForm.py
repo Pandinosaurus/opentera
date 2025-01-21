@@ -7,7 +7,7 @@ from flask_babel import gettext
 class TeraDeviceForm:
 
     @staticmethod
-    def get_device_form(user_access: DBManagerTeraUserAccess):
+    def get_device_form():
         form = TeraForm("device")
 
         # Building lists
@@ -33,7 +33,7 @@ class TeraDeviceForm:
         section.add_item(TeraFormItem("id_device_subtype", gettext("Device Sub-Type"), "array", item_required=False,
                                       item_condition=TeraFormItemCondition("id_device_type", "=", "changed",
                                                                            "/api/user/devicesubtypes?id_device_type=")))
-        section.add_item(TeraFormItem("device_token", gettext("Access Token"), "label",
+        section.add_item(TeraFormItem("device_token", gettext("Access Token"), "longlabel",
                                       item_options={"readonly": False}))
         section.add_item(TeraFormItem("device_certificate", gettext("Certificate"), "hidden",
                                       item_options={"readonly": True}))

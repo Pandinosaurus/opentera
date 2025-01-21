@@ -1,14 +1,12 @@
 # Will try to install env if not present.
 # Conda needs to be installed first
 
-
-
 set (ENV_PATH ${CMAKE_CURRENT_SOURCE_DIR}/python-${PYTHON_VERSION})
 file(MAKE_DIRECTORY ${ENV_PATH})
 
 # Define packages to install
 set (conda_packages
-    protobuf # ==3.18.1
+    # protobuf==5.28.3
 )
 
 if(WIN32)
@@ -19,7 +17,6 @@ else(WIN32)
     set(CONDA_PATH "$ENV{HOME}/miniconda3/bin/conda")
     set(PYTHON_PATH ${ENV_PATH}/bin/python)
 endif(WIN32)
-
 
 
 # Use the requirements file instead of listing all packages in CMake.
@@ -35,9 +32,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-
 # TODO - INSTALL WITH CONDA ?
-
 
 # Will always be considered out of date...
 # Always proceed...
@@ -47,8 +42,3 @@ add_custom_target(
   WORKING_DIRECTORY ${ENV_PATH}
   DEPENDS ${PYTHON_PATH} python-requirements
 )
-
-
-    
-
-

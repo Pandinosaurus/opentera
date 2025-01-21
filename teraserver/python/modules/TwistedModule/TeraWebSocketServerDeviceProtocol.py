@@ -4,7 +4,7 @@ from autobahn.websocket.types import ConnectionDeny
 # OpenTera
 from opentera.db.models.TeraDevice import TeraDevice
 from opentera.modules.BaseModule import ModuleNames, create_module_message_topic_from_name, create_module_event_topic_from_name
-
+from opentera.redis.RedisVars import RedisVars
 
 # Messages
 import opentera.messages.python as messages
@@ -34,18 +34,26 @@ class TeraWebSocketServerDeviceProtocol(TeraWebSocketServerProtocol):
         # print(ret)
 
         if self.device:
-            # This will wait until subscribe result is available...
-            # Register only once to events from modules, will be filtered after
-            ret1 = yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            # Events from UserManagerModule
+            yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
                 ModuleNames.USER_MANAGER_MODULE_NAME), self.redis_event_message_received)
 
-            ret2 = yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            # Events from FlaskModule
+            yield self.subscribe_pattern_with_callback(
+                create_module_event_topic_from_name(ModuleNames.TWISTED_MODULE_NAME, self.device.device_uuid),
+                self.redis_tera_module_message_received)
+
+            # Events from DatabaseModule
+            yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
                 ModuleNames.DATABASE_MODULE_NAME), self.redis_event_message_received)
 
-            # Direct events
-            ret3 = yield self.subscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
+            # Events from FileTransferService
+            yield self.subscribe_pattern_with_callback(
+                RedisVars.build_service_event_topic('FileTransferService'), self.redis_event_message_received)
 
-            print(ret1, ret2, ret3)
+            # Direct events
+            yield self.subscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
+
             # MAKE SURE TO SUBSCRIBE TO EVENTS BEFORE SENDING ONLINE MESSAGE
             tera_message = self.create_tera_message(
                 create_module_message_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME))
@@ -125,22 +133,31 @@ class TeraWebSocketServerDeviceProtocol(TeraWebSocketServerProtocol):
             self.publish(create_module_message_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME),
                          tera_message.SerializeToString())
 
-            # Unsubscribe to events
-            ret1 = yield self.unsubscribe_pattern_with_callback(
+            # Events from UserManagerModule
+            yield self.unsubscribe_pattern_with_callback(
                 create_module_event_topic_from_name(ModuleNames.USER_MANAGER_MODULE_NAME),
                 self.redis_event_message_received)
 
-            ret2 = yield self.unsubscribe_pattern_with_callback(
+            # Events from FlaskModule
+            yield self.unsubscribe_pattern_with_callback(
+                create_module_event_topic_from_name(ModuleNames.TWISTED_MODULE_NAME, self.device.device_uuid),
+                self.redis_tera_module_message_received)
+
+            # Events from DatabaseModule
+            yield self.unsubscribe_pattern_with_callback(
                 create_module_event_topic_from_name(ModuleNames.DATABASE_MODULE_NAME),
                 self.redis_event_message_received)
 
-            ret3 = yield self.unsubscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
+            # Events from FileTransferService
+            yield self.unsubscribe_pattern_with_callback(
+                RedisVars.build_service_event_topic('FileTransferService'), self.redis_event_message_received)
+
+            # Direct events
+            yield self.unsubscribe_pattern_with_callback(self.event_topic(), self.redis_event_message_received)
 
             # log information
             self.logger.log_info(self, "Device websocket disconnected",
                                  self.device.device_name, self.device.device_uuid)
-
-            print(ret1, ret2, ret3)
 
         # Unsubscribe to messages
         # ret = yield self.unsubscribe_pattern_with_callback(self.answer_topic(), self.redis_tera_message_received)

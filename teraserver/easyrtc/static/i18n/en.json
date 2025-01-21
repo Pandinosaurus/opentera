@@ -11,7 +11,9 @@
 		"video2": "Extra Video Source",
 		"audio2": "Extra Audio Source",
 		"mirror": "Mirror Image",
-		"none": "None"
+		"none": "None",
+		"screenaudio": "Share screen audio",
+		"blur": "Blur background"
 	},
 	"chronosDialog": {
 		"title": "Timers",
@@ -29,6 +31,14 @@
 		"start": "Start",
 		"cancel": "Cancel",
 		"completed": "Completed!",
+		"all": "All",
+		"self": "Myself only"
+	},
+	"counterDialog": {
+		"title": "Counters",
+		"participants": "Participant(s)",
+		"start": "Start",
+		"cancel": "Cancel",
 		"all": "All",
 		"self": "Myself only"
 	},
@@ -72,6 +82,7 @@
 		"speaker-all": "Sound - All",
 		"tools": "Tools",
 		"chronos": "Timers",
+		"counter": "Counters",
 		"measures": "Measurements",
 		"zoom": "Zoom",
 		"zoom-max": "Max",
@@ -83,6 +94,23 @@
 		"preset-2": "Position 2",
 		"preset-3": "Position 3",
 		"screenof": "Screen -",
-		"cameraof": "Camera -"
+		"cameraof": "Camera -",
+		"music": "Share music",
+		"star": "Focus everyone on that video",
+		"swap": "Enlarge video for myself",
+		"play": "Start",
+		"stop": "Stop",
+		"pause": "Pause",
+		"minus": "Decrease",
+		"plus": "Increase",
+		"config": "Settings",
+		"micro": "Microphone on/off",
+		"camera": "Camera on/off",
+		"speaker": "Sound on/off",
+		"cam-change": "Toggle active camera",
+		"cam-settings": "Camera settings",
+		"cam-second": "Enable/disable extra video source",
+		"share-screen": "Enable/disable screen sharing",
+		"music-icon": "Enable/disable music sharing"
 	}
 }

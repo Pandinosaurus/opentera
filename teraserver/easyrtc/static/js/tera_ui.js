@@ -290,9 +290,11 @@ function updateButtonIconState(status, local, index, prefix){
     if (icon !== undefined){
         if (icon.attr('src')){
             let iconImgPath = icon.attr('src').split('/')
+            let iconName = iconImgPath[iconImgPath.length-1].toLowerCase();
+            iconName = iconName.split("_")[0].split(".")[0];
 
             if (status === true){
-                iconImgPath[iconImgPath.length-1] = prefix.toLowerCase() + "_on.png";
+                iconImgPath[iconImgPath.length-1] = iconName + "_on.png";
                 let must_show = false;
                 if (local){
                     if (localTimerHandles[index-1] !== 0) must_show = true;
@@ -301,7 +303,7 @@ function updateButtonIconState(status, local, index, prefix){
                 }
                 (!must_show) ? icon.hide() : icon.show();
             }else{
-                iconImgPath[iconImgPath.length-1] = prefix.toLowerCase() + ".png";
+                iconImgPath[iconImgPath.length-1] = iconName + ".png";
                 //icon.show();
             }
             icon.attr('src', pathJoin(iconImgPath))
@@ -333,12 +335,12 @@ function enlargeView(local, index){
     }
 
     // Update layouts
-    updateUserLocalViewLayout(localStreams.length, remoteStreams.length);
-    updateUserRemoteViewsLayout(remoteStreams.length);
+    updateUserLocalViewLayout();
+    updateUserRemoteViewsLayout();
 
 }
 
-function btnShareScreenClicked(){
+function btnShareScreenClicked(sound_only = false){
     if (localContact.status.sharing2ndSource === true){
         console.warn("Trying to share screen while already having a second video source");
         return;
@@ -352,14 +354,24 @@ function btnShareScreenClicked(){
     localContact.status.sharingScreen = !localContact.status.sharingScreen;
 
     // Do the screen sharing
-    shareScreen(true, localContact.status.sharingScreen).then(function (){
+    shareScreen(true, localContact.status.sharingScreen, sound_only).then(function (){
+        let btn = getButtonIcon(true, 1, "ShareScreen");
+        btn.data().soundOnly = sound_only;
 
+        // Update icon source according to state
+        if (sound_only && localContact.status.sharingScreen){
+            btn.attr('src', 'images/music_on.png');
+        }else{
+            btn.attr('src', 'images/sharescreen.png');
+        }
         updateButtonIconState(localContact.status.sharingScreen, true, 1, "ShareScreen");
 
         // Show / Hide share screen button
-        let btn = getButtonIcon(true, 1, "ShareScreen");
-        if (localContact.status.sharingScreen)
+        if(localContact.status.sharingScreen){
             btn.show();
+        }else{
+            btn.data().soundOnly = false; // Reset button state
+        }
 
         // Show / Hide second source button
         btn = getButtonIcon(true, 1, "Show2ndVideo");
@@ -447,6 +459,17 @@ function setConfigDialogValues(peer_id, audios, videos, config){
     let videoSelect = $('#videoSelect')[0];
     videoSelect.options.length = 0;
 
+    // Background blur
+    let blurCheck = $('#blurCheck')[0];
+    let blurGroup = $('#blurGroup')[0];
+    if (local_peerid === peer_id && browser.getBrowserName() !== 'Firefox'){
+        blurGroup.hidden = false;
+        blurCheck.checked = config['video1Blur'];
+    }else{
+        blurGroup.hidden = true;
+        blurCheck.checked = false;
+    }
+
     // Main audio source selector
     let audioSelect = $('#audioSelect')[0];
     audioSelect.options.length = 0;
@@ -464,6 +487,10 @@ function setConfigDialogValues(peer_id, audios, videos, config){
     // Mirror toggle
     let mirrorCheck = $('#mirrorCheck')[0];
     mirrorCheck.checked = config['video1Mirror'];
+
+    // Audio for screen sharing
+    let screenAudio = $('#screenAudioCheck')[0];
+    screenAudio.checked = config['screenAudio'];
 
     // Fill lists
     audios.forEach(audio => {
@@ -493,13 +520,17 @@ function configDialogClosed(){
     let videoSelect2 = $('#videoSelect2')[0];
     let audioSelect2 = $('#audioSelect2')[0];
     let mirrorCheck = $('#mirrorCheck')[0];
+    let screenAudio = $('#screenAudioCheck')[0];
+    let blurCheck = $('#blurCheck')[0];
 
     let new_config = {
         'currentVideoSourceIndex': videoSelect.selectedIndex,
         'currentAudioSourceIndex': audioSelect.selectedIndex,
         'video1Mirror': mirrorCheck.checked,
+        'video1Blur': blurCheck.checked,
         'currentVideoSource2Index': videoSelect2.selectedIndex-1,
-        'currentAudioSource2Index': audioSelect2.selectedIndex-1
+        'currentAudioSource2Index': audioSelect2.selectedIndex-1,
+        'screenAudio': screenAudio.checked
     };
 
     if (peer_id === local_peerid){
@@ -530,6 +561,17 @@ function updateLocalConfig(new_config){
             if (SharedObject.setLocalMirror !== undefined)
                 SharedObject.setLocalMirror(currentConfig['video1Mirror']);
         }
+    }
+
+    if (new_config['video1Blur'] !== currentConfig['video1Blur']) {
+        // Blur changed
+        currentConfig['video1Blur'] = new_config['video1Blur'];
+        blur(currentConfig['video1Blur']);
+    }
+
+    if (new_config['screenAudio'] !== currentConfig['screenAudio']){
+        // Share screen audio changed
+        currentConfig['screenAudio'] = new_config['screenAudio'];
     }
 
     if (new_config['currentVideoSource2Index'] !== currentConfig['currentVideoSource2Index'] ||
@@ -722,27 +764,77 @@ function showMeasuresDialog(){
     $('#measureDialog').modal('show');
 }
 
-function showTextDisplay(local, index, show){
+function showCounterDialog(){
+    let partSelect = $('#counterPartSelect')[0];
+    partSelect.options.length = 0;
+    partSelect.options[partSelect.options.length] = new Option(translator.translateForKey("counterDialog.all", currentLang), "0");
+
+    for (let i=0; i<remoteContacts.length; i++){
+        let index = getStreamIndexForPeerId(remoteContacts[i].peerid, 'default');
+        if (index !== undefined){
+            partSelect.options[partSelect.options.length] = new Option(getTitle(false, index+1), index+1);
+        }
+    }
+    partSelect.options[partSelect.options.length] = new Option(translator.translateForKey("counterDialog.self", currentLang), "-1");
+
+    $('#counterDialog').modal('show');
+
+}
+
+function showChrono(local, index, show){
     let view_prefix = ((local === true) ? 'local' : 'remote');
-    let display = $('#' + view_prefix + 'Display' + index);
+    let display = $('#' + view_prefix + 'Chrono' + index);
     if (display.length){
         (show) ? display.show() : display.hide();
     }
+    showChronoButtons(local, index, !show, false);
 }
 
-function setTextDisplay(local, index, text){
+function showChronoButtons(local, index, playing, stopped){
     let view_prefix = ((local === true) ? 'local' : 'remote');
-    let display = $('#' + view_prefix + 'Text' + index);
+    let play = $('#' + view_prefix + 'ChronoPlay' + index);
+    if (play.length){
+        (!playing && !stopped) ? play.show() : play.hide();
+    }
+    let pause = $('#' + view_prefix + 'ChronoPause' + index);
+    if (pause.length){
+        (playing) ? pause.show() : pause.hide();
+    }
+    let stop = $('#' + view_prefix + 'ChronoStop' + index);
+    if (stop.length){
+        (!stopped) ? stop.show() : stop.hide();
+    }
+}
+
+function setChronoText(local, index, text){
+    let view_prefix = ((local === true) ? 'local' : 'remote');
+    let display = $('#' + view_prefix + 'ChronoText' + index);
     if (display.length){
         display[0].innerHTML = text;
     }
 }
 
-function getTextDisplay(local, index){
+function getChronoTextDisplay(local, index){
     let view_prefix = ((local === true) ? 'local' : 'remote');
-    let display = $('#' + view_prefix + 'Text' + index);
+    let display = $('#' + view_prefix + 'ChronoText' + index);
     if (display.length){
         return display[0].innerHTML;
+    }
+}
+
+function setCounterText(local, index, text){
+    let view_prefix = ((local === true) ? 'local' : 'remote');
+    let display = $('#' + view_prefix + 'CounterText' + index);
+    if (display.length){
+        display[0].innerHTML = text;
+    }
+}
+
+function showCounter(local, index, show) {
+    let view_prefix = ((local === true) ? 'local' : 'remote');
+    let display = $('#' + view_prefix + 'Counter' + index);
+    if (display.length) {
+        (show) ? display.show() : display.hide();
     }
 }
 
@@ -819,7 +911,8 @@ function showConfigDialog(peer_id, audios, videos, config){
     if (peer_id !== local_peerid){
         peer_name = remoteContacts[getContactIndexForPeerId(peer_id)].name;
     }
-    $('#configDialogLongTitle')[0].innerHTML = translator.translateForKey("configDialog.title", currentLang) + " - " + peer_name;
+    $('#configDialogLongTitle')[0].innerHTML = translator.translateForKey("configDialog.title", currentLang)
+        + " - " + peer_name;
     $('#configDialog').modal('show');
 }
 

@@ -1,14 +1,16 @@
-from flask import jsonify, session, request
+from flask import jsonify, request
 from flask_restx import Resource, reqparse, inputs
 from sqlalchemy import exc
-from modules.LoginModule.LoginModule import user_multi_auth
+from modules.LoginModule.LoginModule import user_multi_auth, current_user
 from modules.FlaskModule.FlaskModule import user_api_ns as api
-from opentera.db.models.TeraUser import TeraUser
+from opentera.db.models.TeraUser import TeraUser, UserPasswordInsecure, UserNewPasswordSameAsOld
 from opentera.db.models.TeraUserGroup import TeraUserGroup
 from flask_babel import gettext
 from modules.DatabaseModule.DBManager import DBManager
 from opentera.redis.RedisRPCClient import RedisRPCClient
 from opentera.modules.BaseModule import ModuleNames
+
+from modules.FlaskModule.FlaskUtils import FlaskUtils
 
 # Parser definition(s)
 get_parser = api.parser()
@@ -27,11 +29,8 @@ get_parser.add_argument('with_usergroups', type=inputs.boolean, help='Include us
 get_parser.add_argument('with_status', type=inputs.boolean, help='Include status information - offline, online, busy '
                                                                  'for each user')
 
-post_parser = reqparse.RequestParser()
-# post_parser.add_argument('user', type=str, location='json', help='User to create / update. If structure has a field '
-#                                                                '"user_groups", also update user groups for that user',
-#                          required=True)
 
+post_parser = api.parser()
 post_schema = api.schema_model('user_user', {'properties': TeraUser.get_json_schema(), 'type': 'object',
                                              'location': 'json'})
 
@@ -46,17 +45,33 @@ class UserQueryUsers(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @user_multi_auth.login_required
-    @api.expect(get_parser)
+    @staticmethod
+    def get_password_weaknesses_text(weaknesses: list) -> str:
+        text_list = []
+        for weakness in weaknesses:
+            if weakness == UserPasswordInsecure.PasswordWeaknesses.NO_SPECIAL:
+                text_list.append(gettext('Password missing special character'))
+            if weakness == UserPasswordInsecure.PasswordWeaknesses.NO_NUMERIC:
+                text_list.append(gettext('Password missing numeric character'))
+            if weakness == UserPasswordInsecure.PasswordWeaknesses.BAD_LENGTH:
+                text_list.append(gettext('Password not long enough'))
+            if weakness == UserPasswordInsecure.PasswordWeaknesses.NO_LOWER_CASE:
+                text_list.append(gettext('Password missing lower case letter'))
+            if weakness == UserPasswordInsecure.PasswordWeaknesses.NO_UPPER_CASE:
+                text_list.append(gettext('Password missing upper case letter'))
+
+        return ",".join(text for text in text_list)
+
     @api.doc(description='Get user information. If no id specified, returns all accessible users',
              responses={200: 'Success',
                         500: 'Database error'})
+    @api.expect(get_parser)
+    @user_multi_auth.login_required
     def get(self):
-        parser = get_parser
-
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
-        args = parser.parse_args()
-
+        """
+        Get users
+        """
+        args = get_parser.parse_args()
         user_access = DBManager.userAccess(current_user)
 
         users = []
@@ -93,10 +108,16 @@ class UserQueryUsers(Resource):
 
         if users:
             users_list = []
+            status_users = []
             if args['with_status']:
                 # Query users status
-                rpc = RedisRPCClient(self.module.config.redis_config)
-                status_users = rpc.call(ModuleNames.USER_MANAGER_MODULE_NAME.value, 'status_users')
+                if not self.test:
+                    rpc = RedisRPCClient(self.module.config.redis_config)
+                    status_users = rpc.call(ModuleNames.USER_MANAGER_MODULE_NAME.value, 'status_users')
+                else:
+                    status_users = {}
+                    for user in users:
+                        status_users[user.user_uuid] = {'busy': False, 'online': True}
 
             for user in users:
                 if user is not None:
@@ -147,18 +168,7 @@ class UserQueryUsers(Resource):
             return jsonify(users_list)
 
         return [], 200
-        # try:
-        #     users = TeraUser.query_data(my_args)
-        #     users_list = []
-        #     for user in users:
-        #         users_list.append(user.to_json())
-        #     return jsonify(users_list)
-        # except InvalidRequestError:
-        #     return '', 500
 
-    @user_multi_auth.login_required
-    # @api.expect(post_parser)
-    @api.expect(post_schema)
     @api.doc(description='Create / update user. id_user must be set to "0" to create a new user. User can be modified '
                          'if: current user is super admin or user is part of a project which the current user is admin.'
                          ' Promoting a user to super admin is restricted to super admins.'
@@ -169,10 +179,16 @@ class UserQueryUsers(Resource):
                              'JSON body',
                         409: 'Username is already taken',
                         500: 'Internal error when saving user'})
+    @api.expect(post_schema)
+    @user_multi_auth.login_required
     def post(self):
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
-
+        """
+        Create / update an user
+        """
         user_access = DBManager.userAccess(current_user)
+
+        if 'user' not in request.json:
+            return gettext('Missing user'), 400
 
         # Using request.json instead of parser, since parser messes up the json!
         json_user = request.json['user']
@@ -208,7 +224,8 @@ class UserQueryUsers(Resource):
                     site_roles = update_user.get_sites_roles()
                     user_sites_ids = [site.id_site for site in site_roles]
                     # if json_user['id_user'] not in user_access.get_accessible_users_ids(admin_only=True):
-                    if len(set(user_sites_ids).intersection(user_access.get_accessible_sites_ids(admin_only=True))) == 0:
+                    if len(set(user_sites_ids).intersection(
+                            user_access.get_accessible_sites_ids(admin_only=True))) == 0:
                         return gettext('Forbidden'), 403
         else:
             # New user can be created by superadmins and by site admins, when user groups are specified
@@ -236,6 +253,12 @@ class UserQueryUsers(Resource):
                                              UserQueryUsers.__name__,
                                              'post', 500, 'Database error', str(e))
                 return gettext('Database error'), 500
+            except UserPasswordInsecure as e:
+                return (gettext('Password not strong enough') + ': ' +
+                        FlaskUtils.get_password_weaknesses_text(e.weaknesses), 400)
+            except UserNewPasswordSameAsOld:
+                return gettext('New password same as old password'), 400
+
         else:
             # New user, check if password is set
             # if 'user_password' not in json_user:
@@ -250,8 +273,8 @@ class UserQueryUsers(Resource):
             if json_user['user_password'] is None or json_user['user_password'] == '':
                 return gettext('Invalid password'), 400
 
-            # Check if username is already taken
-            if TeraUser.get_user_by_username(json_user['user_username']) is not None:
+            # Check if username is already taken - since it's an unique constraint, deleted users are also considered
+            if TeraUser.get_user_by_username(json_user['user_username'], with_deleted=True) is not None:
                 return gettext('Username unavailable.'), 409
 
             # Ok so far, we can try to create the user!
@@ -268,6 +291,9 @@ class UserQueryUsers(Resource):
                                              UserQueryUsers.__name__,
                                              'post', 500, 'Database error', str(e))
                 return gettext('Database error'), 500
+            except UserPasswordInsecure as e:
+                return (gettext('Password not strong enough') + ': ' +
+                        FlaskUtils.get_password_weaknesses_text(e.weaknesses), 400)
 
         update_user = TeraUser.get_user_by_id(json_user['id_user'])
 
@@ -297,38 +323,20 @@ class UserQueryUsers(Resource):
 
                     update_user.commit()
 
-            # Check if there's some user groups for the updated user that we need to delete
-            # id_groups_to_delete = set([group.id_user_group for group in update_user.user_user_groups])\
-            #     .difference(user_user_groups_ids)
-            #
-            # for id_to_del in id_groups_to_delete:
-            #     uug_to_del = TeraUserUserGroup.query_user_user_group_for_user_user_group(user_id=update_user.id_user,
-            #                                                                              user_group_id=id_to_del)
-            #     TeraUserUserGroup.delete(id_todel=uug_to_del.id_user_user_group)
-            #
-            # # Update / insert user groups
-            # for user_group in user_user_groups:
-            #     if not TeraUserUserGroup.query_user_user_group_for_user_user_group(user_id=update_user.id_user,
-            #                                                                        user_group_id=
-            #                                                                        user_group['id_user_group']):
-            #         # Group not already associated - associates!
-            #         TeraUserUserGroup.insert_user_user_group(id_user_group=user_group['id_user_group'],
-            #                                                  id_user=update_user.id_user)
-
         return [update_user.to_json()]
 
-    @user_multi_auth.login_required
-    @api.expect(delete_parser)
     @api.doc(description='Delete a specific user',
              responses={200: 'Success',
                         403: 'Logged user can\'t delete user (only super admin can delete)',
                         500: 'Database error.'})
+    @api.expect(delete_parser)
+    @user_multi_auth.login_required
     def delete(self):
-        parser = delete_parser
-        current_user = TeraUser.get_user_by_uuid(session['_user_id'])
+        """
+        Delete an user
+        """
         user_access = DBManager.userAccess(current_user)
-
-        args = parser.parse_args()
+        args = delete_parser.parse_args()
         id_todel = args['id']
 
         # Check if we are trying to delete ourselves!
@@ -359,17 +367,23 @@ class UserQueryUsers(Resource):
                 # - Associated sessions in which the user is part of
                 # - Sessions that the user created
                 # - Assets that the user created
-                self.module.logger.log_error(self.module.module_name,
-                                             UserQueryUsers.__name__,
-                                             'delete', 500, 'Database error', str(e))
+                # - Tests that the user created
+                self.module.logger.log_warning(self.module.module_name, UserQueryUsers.__name__, 'delete', 500,
+                                               'Integrity error', str(e))
                 if 't_sessions_users' in str(e.args):
                     return gettext('Can\'t delete user: please remove all sessions that this user is part of before '
                                    'deleting.'), 500
                 if 't_sessions_id_creator' in str(e.args):
                     return gettext('Can\'t delete user: please remove all sessions created by this user before '
                                    'deleting.'), 500
-                return gettext('Can\'t delete user: please delete all assets created by this user before deleting.')\
-                    , 500
+                if 't_tests' in str(e.args):
+                    return gettext('Can\'t delete user: please remove all tests created by this user before '
+                                   'deleting.'), 500
+                if 't_assets' in str(e.args):
+                    return gettext('Can\'t delete user: please remove all assets created by this user before '
+                                   'deleting.'), 500
+                return \
+                    gettext('Can\'t delete user: please delete all assets created by this user before deleting.'), 500
             except exc.SQLAlchemyError as e:
                 import sys
                 print(sys.exc_info())
@@ -386,4 +400,3 @@ class UserQueryUsers(Resource):
             user_to_del.commit()
 
         return '', 200
-

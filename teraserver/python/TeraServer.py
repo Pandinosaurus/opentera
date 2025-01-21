@@ -1,7 +1,7 @@
 """
 Project OpenTera (https://github.com/introlab/opentera)
 
-Copyright (C) 2020
+Copyright (C) 2020-2024
 IntRoLab / ESTRAD, Université de Sherbrooke, Centre de Recherche sur le Vieillissement de Sherbrooke
 
 Authors:
@@ -26,51 +26,18 @@ import pathlib
 import sys
 import os
 import argparse
+import redis
 from sqlalchemy.exc import OperationalError
-import opentera.crypto.crypto_utils as crypto
 from opentera.utils.TeraVersions import TeraVersions
 from opentera.config.ConfigManager import ConfigManager
+from opentera.db.models.TeraServerSettings import TeraServerSettings
+from opentera.db.models.TeraService import TeraService
+from opentera.redis.RedisVars import RedisVars
 import modules.Globals as Globals
-
-
-def generate_certificates(config: ConfigManager):
-    """
-        Will generate certificates and keys if they do not exist
-    """
-    site_certificate_path = config.server_config['ssl_path'] + '/' + config.server_config['site_certificate']
-    site_key_path = config.server_config['ssl_path'] + '/' + config.server_config['site_private_key']
-    ca_certificate_path = config.server_config['ssl_path'] + '/' + config.server_config['ca_certificate']
-    ca_key_path = config.server_config['ssl_path'] + '/' + config.server_config['ca_private_key']
-
-    if not os.path.exists(site_certificate_path) or not os.path.exists(site_key_path):
-        print('Generating Site certificate and key')
-        site_info = crypto.generate_local_certificate()
-        # Save files
-        crypto.write_private_key_and_certificate(site_info, keyfile=site_key_path, certfile=site_certificate_path)
-
-    if not os.path.exists(ca_certificate_path) or not os.path.exists(ca_key_path):
-        print('Generating Site certificate and key')
-        ca_info = crypto.generate_ca_certificate(common_name='Local CA')
-        # Save files
-        crypto.write_private_key_and_certificate(ca_info, keyfile=ca_key_path, certfile=ca_certificate_path)
-
-
-def verify_file_upload_directory(config: ConfigManager, create=True):
-    file_upload_path = config.server_config['upload_path']
-
-    if not os.path.exists(file_upload_path):
-        if create:
-            # TODO Change permissions?
-            os.mkdir(file_upload_path, 0o700)
-        else:
-            return None
-    return file_upload_path
 
 
 def init_shared_variables(config):
     # Create user token
-    from opentera.db.models.TeraServerSettings import TeraServerSettings
-
     # Dynamic key for users, updated at every restart (for now)
     # Server should rotate key every hour, day?
     user_token_key = TeraServerSettings.generate_token_key(32)
@@ -78,8 +45,6 @@ def init_shared_variables(config):
     service_token_key = TeraServerSettings.generate_token_key(32)
 
     # Create redis client
-    import redis
-
     redis_client = redis.Redis(host=config.redis_config['hostname'],
                                port=config.redis_config['port'],
                                db=config.redis_config['db'],
@@ -87,7 +52,6 @@ def init_shared_variables(config):
                                password=config.redis_config['password'])
 
     # Set API Token Keys
-    from opentera.redis.RedisVars import RedisVars
     # Set USER
     redis_client.set(RedisVars.RedisVar_UserTokenAPIKey, user_token_key)
 
@@ -95,7 +59,8 @@ def init_shared_variables(config):
     redis_client.set(RedisVars.RedisVar_ServiceTokenAPIKey, service_token_key)
 
     # Set DEVICE
-    # TODO - Verify static / dynamic tokens for devices
+    # Dynamic tokens for device are not implemented, for ServiceAccessManager to work, we just set the
+    # Dynamic and Static key to the same value
     redis_client.set(RedisVars.RedisVar_DeviceTokenAPIKey, TeraServerSettings.get_server_setting_value(
         TeraServerSettings.ServerDeviceTokenKey))
     redis_client.set(RedisVars.RedisVar_DeviceStaticTokenAPIKey, TeraServerSettings.get_server_setting_value(
@@ -114,40 +79,21 @@ def init_shared_variables(config):
     versions.save_to_db()
 
 
-def init_services(config: ConfigManager):
+def init_opentera_service(config: ConfigManager):
     print('Initializing services...')
-
-    from opentera.db.models.TeraService import TeraService
-    from opentera.redis.RedisVars import RedisVars
-    import json
-    # Create redis client
-    import redis
-    redis_client = redis.Redis(host=config.redis_config['hostname'],
-                               port=config.redis_config['port'],
-                               db=config.redis_config['db'],
-                               username=config.redis_config['username'],
-                               password=config.redis_config['password'])
-
     # Set python path to current folder so that import work from services
     tera_python_dir = pathlib.Path(__file__).parent.absolute()
     os.environ['PYTHONPATH'] = str(tera_python_dir)
 
-    services = TeraService.query.all()
-    for service in services:
-        # Ignore special service TeraServer
-        if service.service_key == 'OpenTeraServer':
-            Globals.opentera_service_id = service.id_service
-            continue
-        if service.service_enabled:
-            print('Activating service: ' + service.service_key)
-            redis_client.set(RedisVars.RedisVar_ServicePrefixKey + service.service_key, json.dumps(service.to_json()))
-        else:
-            print('Skipping disabled service: ' + service.service_key)
+    # Update service ID
+    service = TeraService.get_service_by_key('OpenTeraServer')
+    Globals.opentera_service_id = service.id_service
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='OpenTera Server')
     parser.add_argument('--enable_tests', help='Test mode for server.', default=False)
+    parser.add_argument('--create_defaults', help='Create default server values (test mode)', default=False)
     args = parser.parse_args()
 
     config_man = ConfigManager()
@@ -176,9 +122,6 @@ if __name__ == '__main__':
     # Load configuration file.
     config_man.load_config(config_file)
 
-    # Generate certificate (if required)
-    generate_certificates(config_man)
-
     try:
 
         if config_man.server_config['enable_docs']:
@@ -193,8 +136,9 @@ if __name__ == '__main__':
 
         # Echo will be set by "debug_mode" flag
         if args.enable_tests:
-            # In RAM SQLITE DB for tests
-            Globals.db_man.open_local(None, echo=True, ram=True)
+            # In RAM SQLITE DB for tests, change to ram=False and enter full path in db_infos to use a file
+            db_infos = {'filename': ''}
+            Globals.db_man.open_local(db_infos, echo=True, ram=True)
 
             # Create default values, if required
             Globals.db_man.create_defaults(config=config_man, test=True)
@@ -202,7 +146,7 @@ if __name__ == '__main__':
             Globals.db_man.open(config_man.server_config['debug_mode'])
 
             # Create minimal values, if required
-            Globals.db_man.create_defaults(config=config_man, test=False)
+            Globals.db_man.create_defaults(config=config_man, test=args.create_defaults)
 
     except OperationalError as e:
         print("Unable to connect to database - please check settings in config file!", e)
@@ -210,45 +154,44 @@ if __name__ == '__main__':
 
     # Other modules are imported here so globals are initialized first (this is ugly)
     from modules.LoginModule.LoginModule import LoginModule
-    from modules.FlaskModule.FlaskModule import FlaskModule
+    from modules.FlaskModule.FlaskModule import FlaskModule, flask_app
     from modules.TwistedModule.TwistedModule import TwistedModule
     from modules.ServiceLauncherModule.ServiceLauncherModule import ServiceLauncherModule
     from modules.UserManagerModule.UserManagerModule import UserManagerModule
 
-    # Create Redis variables shared with services
-    init_shared_variables(config=config_man)
+    with flask_app.app_context():
+        # Create Redis variables shared with services
+        init_shared_variables(config=config_man)
 
-    # Initialize enabled services
-    init_services(config=config_man)
+        # Initialize enabled services
+        init_opentera_service(config=config_man)
 
-    # Main Flask module
-    flask_module = FlaskModule(config_man)
+        # Main Flask module
+        flask_module = FlaskModule(config_man, test_mode=args.enable_tests)
 
-    # LOGIN MANAGER, must be initialized after Flask
-    #################################################
-    login_module = LoginModule(config_man)
+        # LOGIN MANAGER, must be initialized after Flask
+        #################################################
+        Globals.login_module = LoginModule(config_man)
 
-    # Twisted will run flask, must be initialized after Flask
-    #########################################################
-    twisted_module = TwistedModule(config_man)
+        # Twisted will run flask, must be initialized after Flask
+        #########################################################
+        twisted_module = TwistedModule(config_man)
 
-    user_manager_module = UserManagerModule(config_man)
+        user_manager_module = UserManagerModule(config_man)
 
-    service_launcher = ServiceLauncherModule(config_man, system_only=args.enable_tests, enable_tests=args.enable_tests)
+        service_launcher = ServiceLauncherModule(config_man, system_only=True, enable_tests=args.enable_tests)
 
-    # This is blocking, running event loop
-    twisted_module.run()
+        # This is blocking, running event loop
+        twisted_module.run()
 
-    # Cleaning up
-    service_launcher.terminate_processes()
+        # Cleaning up
+        service_launcher.terminate_processes()
 
-    # Flush redis database
-    import redis
+        # Close DB
+        redis_client = redis.Redis(host=config_man.redis_config['hostname'],
+                                   port=config_man.redis_config['port'],
+                                   db=config_man.redis_config['db'],
+                                   username=config_man.redis_config['username'],
+                                   password=config_man.redis_config['password'])
 
-    redis_client = redis.Redis(host=config_man.redis_config['hostname'],
-                               port=config_man.redis_config['port'],
-                               db=config_man.redis_config['db'],
-                               username=config_man.redis_config['username'],
-                               password=config_man.redis_config['password'])
-
-    redis_client.flushdb()
+        redis_client.flushdb()

@@ -7,10 +7,15 @@ from opentera.messages.python.JoinSessionEvent_pb2 import JoinSessionEvent
 from opentera.messages.python.StopSessionEvent_pb2 import StopSessionEvent
 from opentera.messages.python.LeaveSessionEvent_pb2 import LeaveSessionEvent
 from opentera.messages.python.JoinSessionReplyEvent_pb2 import JoinSessionReplyEvent
-from opentera.modules.BaseModule import BaseModule, ModuleNames
+from opentera.modules.BaseModule import BaseModule, ModuleNames, create_module_event_topic_from_name
 from modules.UserManagerModule.UserRegistry import UserRegistry
 from modules.UserManagerModule.ParticipantRegistry import ParticipantRegistry
 from modules.UserManagerModule.DeviceRegistry import DeviceRegistry
+from twisted.internet import defer
+import opentera.messages.python as messages
+from google.protobuf.json_format import ParseError
+from google.protobuf.message import DecodeError
+
 import json
 from datetime import datetime
 
@@ -80,6 +85,141 @@ class UserManagerModule(BaseModule):
             'args': ['str:uuid', 'str:status', 'int:timestamp'],
             'returns': 'dict',
             'callback': self.update_device_status_rpc_callback}
+
+    @defer.inlineCallbacks
+    def setup_module_pubsub(self):
+        print('UserManagerModule - Registering to events...')
+        # Always register to user events
+        yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            ModuleNames.DATABASE_MODULE_NAME, 'user'), self.database_event_received_for_user)
+
+        # Always register to participant events
+        yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+           ModuleNames.DATABASE_MODULE_NAME, 'participant'), self.database_event_received_for_participant)
+
+        # Always register to device events
+        yield self.subscribe_pattern_with_callback(create_module_event_topic_from_name(
+            ModuleNames.DATABASE_MODULE_NAME, 'device'), self.database_event_received_for_device)
+
+        # Need to register to events (base class)
+        super().setup_module_pubsub()
+
+    def database_event_received_for_user(self, pattern, channel, message):
+        # Process database event
+        try:
+            tera_event = messages.TeraEvent()
+            if isinstance(message, str):
+                ret = tera_event.ParseFromString(message.encode('utf-8'))
+            elif isinstance(message, bytes):
+                ret = tera_event.ParseFromString(message)
+
+            database_event = messages.DatabaseEvent()
+
+            # Look for DatabaseEvent
+            for any_msg in tera_event.events:
+                if any_msg.Unpack(database_event):
+                    # Process event
+                    try:
+                        user_dict = json.loads(database_event.object_value)
+                        uuid = user_dict['user_uuid']
+                        if database_event.type == messages.DatabaseEvent.DB_UPDATE:
+                            if not user_dict['user_enabled']:
+                                # User disabled, disconnect user
+                                self.send_user_disconnect_module_message(uuid)
+                            if 'deleted_at' in user_dict:
+                                # User soft-deleted, disconnect user
+                                self.send_user_disconnect_module_message(uuid)
+                        if database_event.type == messages.DatabaseEvent.DB_DELETE:
+                            # User deleted, disconnect user
+                            self.send_user_disconnect_module_message(uuid)
+                    except json.JSONDecodeError as json_decode_error:
+                        print('UserManagerModule:database_event_received_for_user - JSONDecodeError ',
+                              str(database_event.object_value), str(json_decode_error))
+
+        except DecodeError as decode_error:
+            print('UserManagerModule:database_event_received_for_user - DecodeError ', pattern, channel, message,
+                  decode_error)
+        except ParseError as parse_error:
+            print('UserManagerModule:database_event_received_for_user - Failure in database_event_received',
+                  parse_error)
+
+    def database_event_received_for_participant(self, pattern, channel, message):
+        # Process database event
+        try:
+            tera_event = messages.TeraEvent()
+            if isinstance(message, str):
+                ret = tera_event.ParseFromString(message.encode('utf-8'))
+            elif isinstance(message, bytes):
+                ret = tera_event.ParseFromString(message)
+
+            database_event = messages.DatabaseEvent()
+
+            # Look for DatabaseEvent
+            for any_msg in tera_event.events:
+                if any_msg.Unpack(database_event):
+                    # Process event
+                    try:
+                        participant_dict = json.loads(database_event.object_value)
+                        uuid = participant_dict['participant_uuid']
+                        if database_event.type == messages.DatabaseEvent.DB_UPDATE:
+                            if not participant_dict['participant_enabled']:
+                                # User disabled, disconnect user
+                                self.send_participant_disconnect_module_message(uuid)
+                            if 'deleted_at' in participant_dict:
+                                # User soft-deleted, disconnect user
+                                self.send_participant_disconnect_module_message(uuid)
+                        if database_event.type == messages.DatabaseEvent.DB_DELETE:
+                            # User deleted, disconnect user
+                            self.send_participant_disconnect_module_message(uuid)
+                    except json.JSONDecodeError as json_decode_error:
+                        print('UserManagerModule:database_event_received_for_participant - JSONDecodeError ',
+                              str(database_event.object_value), str(json_decode_error))
+
+        except DecodeError as decode_error:
+            print('UserManagerModule:database_event_received_for_participant - DecodeError ', pattern, channel, message,
+                  decode_error)
+        except ParseError as parse_error:
+            print('UserManagerModule:database_event_received_for_participant - Failure in database_event_received',
+                  parse_error)
+
+    def database_event_received_for_device(self, pattern, channel, message):
+        # Process database event
+        try:
+            tera_event = messages.TeraEvent()
+            if isinstance(message, str):
+                ret = tera_event.ParseFromString(message.encode('utf-8'))
+            elif isinstance(message, bytes):
+                ret = tera_event.ParseFromString(message)
+
+            database_event = messages.DatabaseEvent()
+
+            # Look for DatabaseEvent
+            for any_msg in tera_event.events:
+                if any_msg.Unpack(database_event):
+                    # Process event
+                    try:
+                        device_dict = json.loads(database_event.object_value)
+                        uuid = device_dict['device_uuid']
+                        if database_event.type == messages.DatabaseEvent.DB_UPDATE:
+                            if not device_dict['device_enabled']:
+                                # User disabled, disconnect user
+                                self.send_device_disconnect_module_message(uuid)
+                            if 'deleted_at' in device_dict:
+                                # User soft-deleted, disconnect user
+                                self.send_device_disconnect_module_message(uuid)
+                        if database_event.type == messages.DatabaseEvent.DB_DELETE:
+                            # User deleted, disconnect user
+                            self.send_device_disconnect_module_message(uuid)
+                    except json.JSONDecodeError as json_decode_error:
+                        print('UserManagerModule:database_event_received_for_device - JSONDecodeError ',
+                              str(database_event.object_value), str(json_decode_error))
+
+        except DecodeError as decode_error:
+            print('UserManagerModule:database_event_received_for_device - DecodeError ', pattern, channel, message,
+                  decode_error)
+        except ParseError as parse_error:
+            print('UserManagerModule:database_event_received_for_device - Failure in database_event_received',
+                  parse_error)
 
     def update_device_status_rpc_callback(self, uuid: str, status: str, timestamp):
         if uuid in self.device_registry.online_devices():
@@ -183,9 +323,6 @@ class UserManagerModule(BaseModule):
                 'busy': busy_flag,
                 'status': self.device_registry.device_get_status(device_uuid)}
         return result
-
-    def setup_module_pubsub(self):
-        pass
 
     def notify_module_messages(self, pattern, channel, message):
         """
@@ -312,12 +449,15 @@ class UserManagerModule(BaseModule):
                 self.participant_registry.participant_leave_session(participant, session_uuid)
                 participant_event.type = ParticipantEvent.PARTICIPANT_LEFT_SESSION
 
-            # TODO: Get others infos for that participant
             from opentera.db.models.TeraParticipant import TeraParticipant
             part_data = TeraParticipant.get_participant_by_uuid(participant)
-            participant_event.participant_name = part_data.participant_name
-            participant_event.participant_project_name = part_data.participant_project.project_name
-            participant_event.participant_site_name = part_data.participant_project.project_site.site_name
+            if part_data:
+                participant_event.participant_name = part_data.participant_name
+                participant_event.participant_project_name = part_data.participant_project.project_name
+                participant_event.participant_site_name = part_data.participant_project.project_site.site_name
+            else:
+                # TODO: Find when this can happen!
+                pass
             self.send_event_message(participant_event, self.event_topic_name())
 
     def set_devices_in_session(self, session_uuid: str, device_uuids: list, in_session: bool):
@@ -336,7 +476,11 @@ class UserManagerModule(BaseModule):
 
             from opentera.db.models.TeraDevice import TeraDevice
             device_data = TeraDevice.get_device_by_uuid(device)
-            device_event.device_name = device_data.device_name
+            if device_data:
+                device_event.device_name = device_data.device_name
+            else:
+                # TODO: Find when this can happen!
+                pass
             self.send_event_message(device_event, self.event_topic_name())
 
     def handle_join_session_event(self, join_event: JoinSessionEvent):
@@ -396,13 +540,16 @@ class UserManagerModule(BaseModule):
         # Clear busy states of elements that refused to join session
         self.logger.log_info(self.module_name, 'JoinSessionReplyEvent', 'session', join_reply.session_uuid)
         if join_reply.join_reply != JoinSessionReplyEvent.REPLY_ACCEPTED:
-            self.set_users_in_session(session_uuid=join_reply.session_uuid, user_uuids=[join_reply.user_uuid],
-                                      in_session=False)
+            if join_reply.user_uuid:
+                self.set_users_in_session(session_uuid=join_reply.session_uuid, user_uuids=[join_reply.user_uuid],
+                                          in_session=False)
 
-            self.set_participants_in_session(session_uuid=join_reply.session_uuid,
-                                             participant_uuids=[join_reply.participant_uuid],
-                                             in_session=False)
+            if join_reply.participant_uuid:
+                self.set_participants_in_session(session_uuid=join_reply.session_uuid,
+                                                 participant_uuids=[join_reply.participant_uuid],
+                                                 in_session=False)
 
-            self.set_devices_in_session(session_uuid=join_reply.session_uuid,
-                                        device_uuids=[join_reply.device_uuid],
-                                        in_session=False)
+            if join_reply.device_uuid:
+                self.set_devices_in_session(session_uuid=join_reply.session_uuid,
+                                            device_uuids=[join_reply.device_uuid],
+                                            in_session=False)

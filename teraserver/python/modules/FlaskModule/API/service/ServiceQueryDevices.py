@@ -1,29 +1,28 @@
 from flask import request
 from flask_restx import Resource, inputs
 from flask_babel import gettext
-from modules.LoginModule.LoginModule import LoginModule
+from modules.LoginModule.LoginModule import LoginModule, current_service
 from modules.FlaskModule.FlaskModule import service_api_ns as api
+from modules.DatabaseModule.DBManager import DBManager
+from modules.DatabaseModule.DBManagerTeraServiceAccess import DBManagerTeraServiceAccess
 from opentera.db.models.TeraDevice import TeraDevice
-from opentera.db.models.TeraDeviceType import TeraDeviceType
-from opentera.db.models.TeraDeviceSubType import TeraDeviceSubType
-from modules.DatabaseModule.DBManager import db
-import uuid
-from datetime import datetime
 
 # Parser definition(s)
 get_parser = api.parser()
-get_parser.add_argument('device_uuid', type=str, help='Device uuid of the device to query')
+get_parser.add_argument('device_uuid', type=str, help='Device uuid of the device to query', default=None)
+get_parser.add_argument('id_device', type=int, help='Device ID to query', default=None)
 get_parser.add_argument('with_device_type', type=inputs.boolean, help='Give more information about type',
                         default=False)
 get_parser.add_argument('with_device_subtype', type=inputs.boolean, help='Give more information about subtype',
                         default=False)
 get_parser.add_argument('with_device_assets', type=inputs.boolean, help='Give more information about assets',
                         default=False)
-# Unused for now
-# post_parser = api.parser()
+
+
+post_parser = api.parser()
 
 device_schema = api.schema_model('service_device',
-                               {'properties': TeraDevice.get_json_schema(), 'type': 'object', 'location': 'json'})
+                                 {'properties': TeraDevice.get_json_schema(), 'type': 'object', 'location': 'json'})
 
 
 class ServiceQueryDevices(Resource):
@@ -34,20 +33,33 @@ class ServiceQueryDevices(Resource):
         self.module = kwargs.get('flaskModule', None)
         self.test = kwargs.get('test', False)
 
-    @LoginModule.service_token_or_certificate_required
-    @api.expect(get_parser)
     @api.doc(description='Return device information.',
              responses={200: 'Success',
                         500: 'Required parameter is missing',
                         501: 'Not implemented.',
-                        403: 'Logged user doesn\'t have permission to access the requested data'})
+                        403: 'Service doesn\'t have permission to access the requested data'},
+             params={'token': 'Access token'})
+    @api.expect(get_parser)
+    @LoginModule.service_token_or_certificate_required
     def get(self):
+        """
+        Query device information
+        """
         args = get_parser.parse_args()
+        service_access : DBManagerTeraServiceAccess = DBManager.serviceAccess(current_service)
+
         # args['device_uuid'] Will be None if not specified in args
-        if args['device_uuid']:
-            device: TeraDevice = TeraDevice.get_device_by_uuid(args['device_uuid'])
+        if args['device_uuid'] or args['id_device']:
+
+            if args['device_uuid']:
+                device: TeraDevice = TeraDevice.get_device_by_uuid(args['device_uuid'])
+            else:
+                device: TeraDevice = TeraDevice.get_device_by_id(args['id_device'])
 
             if device:
+                if device.id_device not in service_access.get_accessible_devices_ids():
+                    return gettext('Forbidden'), 403
+
                 device_json = device.to_json()
 
                 if args['with_device_type']:
@@ -70,17 +82,19 @@ class ServiceQueryDevices(Resource):
 
         return gettext('Missing arguments'), 400
 
-    @LoginModule.service_token_or_certificate_required
-    @api.expect(device_schema, validate=True)
-    @api.doc(description='To be documented '
-                         'To be documented',
-             responses={200: 'Success - To be documented',
+    @api.doc(description='Update device information ',
+             responses={200: 'Success',
                         500: 'Required parameter is missing',
                         501: 'Not implemented.',
-                        403: 'Logged user doesn\'t have permission to access the requested data'})
+                        403: 'Service doesn\'t have permission to access the requested data'},
+             params={'token': 'Access token'})
+    @api.expect(device_schema, validate=True)
+    @LoginModule.service_token_or_certificate_required
     def post(self):
+        """
+        Create / update device
+        """
         # args = post_parser.parse_args()
-
         # Using request.json instead of parser, since parser messes up the json!
         if 'device' not in request.json:
             return gettext('Missing arguments'), 400
@@ -112,6 +126,9 @@ class ServiceQueryDevices(Resource):
             # Will generate token, last online
             TeraDevice.insert(device)
         else:
+            if device_info['id_device'] not in DBManager.serviceAccess(current_service).get_accessible_devices_ids():
+                return gettext('Forbidden'), 403
+
             # Update device
             TeraDevice.update(device_info['id_device'], device_info)
             # Update info
